@@ -1,159 +1,122 @@
-/* Shark File Manager - Adwaita-inspired modern styling */
+/* Opaque surfaces keep the file browser readable without compositor blur. */
+@define-color shark_bg @theme_base_color;
+@define-color shark_side @theme_bg_color;
+@define-color shark_top @theme_bg_color;
+@define-color shark_text @theme_fg_color;
+@define-color shark_muted alpha(@theme_fg_color, 0.65);
+@define-color shark_line alpha(@theme_fg_color, 0.12);
+@define-color shark_accent @theme_selected_bg_color;
 
-window {
-    background-color: @theme_bg_color;
-    color: @theme_fg_color;
+window.background {
+    background: @shark_bg;
+    color: @shark_text;
+    font-size: 14px;
 }
-
-/* Sidebar styling */
-.sidebar {
-    background-color: alpha(@theme_bg_color, 0.85);
-    border-right: 1px solid alpha(@theme_fg_color, 0.1);
-}
-
-.sidebar-section-header {
-    font-size: 11px;
-    font-weight: 700;
-    color: alpha(@theme_fg_color, 0.5);
-    margin-top: 12px;
-    margin-bottom: 4px;
-    margin-left: 8px;
-    letter-spacing: 0.8px;
-}
-
-.sidebar-list {
-    background-color: transparent;
-}
-
-.sidebar-list row {
-    border-radius: 6px;
-    padding: 2px;
-    margin-bottom: 2px;
-    transition: background-color 150ms ease-in-out;
-}
-
-.sidebar-list row:hover {
-    background-color: alpha(@theme_fg_color, 0.06);
-}
-
-.sidebar-list row:selected {
-    background-color: alpha(@theme_selected_bg_color, 0.18);
-    color: @theme_selected_bg_color;
-    font-weight: 600;
-}
-
-/* Breadcrumb bar styling */
-.breadcrumb-container {
-    background-color: alpha(@theme_fg_color, 0.05);
-    border-radius: 8px;
-    padding: 2px 6px;
-}
-
-.breadcrumb-button {
-    border-radius: 6px;
-    padding: 4px 8px;
-    font-size: 13px;
-    background: transparent;
+headerbar.toolbar {
+    background: @shark_top;
+    color: @shark_text;
     border: none;
+    border-bottom: 1px solid @shark_line;
     box-shadow: none;
-}
-
-.breadcrumb-button:hover {
-    background-color: alpha(@theme_fg_color, 0.08);
-}
-
-.breadcrumb-active {
-    font-weight: 600;
-}
-
-.breadcrumb-separator {
-    color: alpha(@theme_fg_color, 0.35);
-    font-size: 12px;
-    margin: 0 1px;
-}
-
-/* Grid View item styling */
-.file-grid-item {
-    border-radius: 8px;
-    padding: 10px 8px;
-    min-width: 90px;
-    min-height: 95px;
-    margin: 4px;
-    transition: all 120ms ease;
-}
-
-.file-grid-item:hover {
-    background-color: alpha(@theme_fg_color, 0.06);
-}
-
-gridview > child:selected .file-grid-item {
-    background-color: alpha(@theme_selected_bg_color, 0.2);
-    outline: 2px solid @theme_selected_bg_color;
-}
-
-.file-grid-label {
-    font-size: 12px;
-    margin-top: 4px;
-}
-
-/* List View row styling */
-.file-list-row {
-    padding: 6px 12px;
-    border-radius: 6px;
-    margin: 1px 4px;
-}
-
-.file-list-row:hover {
-    background-color: alpha(@theme_fg_color, 0.05);
-}
-
-listview > child:selected .file-list-row {
-    background-color: alpha(@theme_selected_bg_color, 0.2);
-    color: @theme_selected_fg_color;
-}
-
-/* Search bar revealer */
-.search-container {
-    background-color: alpha(@theme_bg_color, 0.95);
-    border-bottom: 1px solid alpha(@theme_fg_color, 0.1);
-    padding: 8px 16px;
-}
-
-/* Progress bar banner */
-.progress-banner {
-    background-color: alpha(@theme_selected_bg_color, 0.12);
-    border-bottom: 1px solid alpha(@theme_selected_bg_color, 0.25);
-    padding: 6px 16px;
-}
-
-/* Status Bar */
-.status-bar {
-    background-color: alpha(@theme_bg_color, 0.9);
-    border-top: 1px solid alpha(@theme_fg_color, 0.08);
     padding: 4px 16px;
-    font-size: 12px;
-    color: alpha(@theme_fg_color, 0.65);
+    min-height: 40px;
 }
+.toolbar button {
+    background: transparent;
+    color: @shark_text;
+    border: 1px solid transparent;
+    border-radius: 7px;
+    box-shadow: none;
+    margin: 0;
+    min-height: 26px;
+    min-width: 26px;
+    padding: 4px;
+}
+.toolbar entry { min-height: 24px; padding: 4px 8px; margin: 0; }
+.toolbar menubutton { padding: 0; margin: 0; }
+.toolbar windowcontrols button image { min-height: 16px; min-width: 16px; }
+.toolbar button:hover { background: alpha(@shark_text, 0.08); }
+.toolbar button:disabled { opacity: 0.3; }
+.breadcrumb-container { padding: 2px 6px; }
+.toolbar .breadcrumb-button { padding: 4px 8px; font-weight: 500; }
+.toolbar .breadcrumb-active { color: @shark_text; font-weight: 700; }
+.breadcrumb-separator { color: @shark_muted; margin: 0 2px; }
+.view-switcher { background: transparent; padding: 2px; border: 1px solid @shark_line; border-radius: 8px; }
+.view-switcher button { min-width: 24px; min-height: 24px; padding: 4px; border-radius: 5px; }
+.view-switcher button:checked { background: alpha(@shark_accent, 0.18); color: @shark_text; }
+.sidebar { background: @shark_side; border-right: 1px solid @shark_line; }
+.toolbar-brand { color: @shark_text; font-size: 18px; font-weight: 700; }
+.toolbar-brand image { color: @shark_accent; }
+headerbar.toolbar > windowhandle > box { min-height: 40px; }
+.sidebar-section-header { color: @shark_muted; font-size: 12px; font-weight: 600; margin: 16px 12px 4px; }
+.sidebar-list { background: transparent; }
+.sidebar-list row {
+    background: transparent;
+    color: @shark_text;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    margin: 2px 0;
+    padding: 0;
+}
+.sidebar-list row:hover { background: alpha(@shark_text, 0.06); }
+.sidebar-list row:selected { background: alpha(@shark_accent, 0.13); border-color: alpha(@shark_accent, 0.35); color: @shark_text; }
+.sidebar-list image { color: @shark_muted; }
+.sidebar-list row:selected image { color: @shark_accent; }
+paned > separator { min-width: 1px; background: @shark_line; }
+gridview, listview { background: @shark_bg; color: @shark_text; }
+gridview { padding: 12px 24px 24px; }
+gridview > child { padding: 4px; border: none; background: transparent; }
+gridview > child:hover, gridview > child:selected { background: transparent; }
+.file-grid-item {
+    min-width: 144px;
+    padding: 8px;
+    border: 1px solid transparent;
+    border-radius: 8px;
+}
+gridview > child:hover .file-grid-item { background: alpha(@shark_text, 0.05); }
+gridview > child:selected .file-grid-item {
+    background: alpha(@shark_accent, 0.14);
+    border-color: alpha(@shark_accent, 0.5);
+}
+.file-grid-label { font-size: 14px; color: @shark_text; }
+.file-grid-detail { font-size: 12px; color: @shark_muted; }
+.file-list-row { padding: 10px 18px; }
+listview > row:selected { background: alpha(@shark_accent, 0.14); color: @shark_text; }
+.dim-label { color: @shark_muted; }
+.search-container, .progress-banner { background: @shark_top; border-bottom: 1px solid @shark_line; padding: 10px 16px; }
+.folder-title { background: @shark_bg; color: @shark_text; font-size: 22px; font-weight: 600; padding: 24px 32px 8px; }
+.status-bar { background: @shark_bg; color: @shark_muted; border-top: 1px solid @shark_line; padding: 8px 20px; font-size: 11px; }
+.empty-state-title { color: @shark_text; font-size: 18px; font-weight: 600; }
+.empty-state-subtitle { color: @shark_muted; }
+entry { background: @shark_bg; color: @shark_text; border: 1px solid @shark_line; border-radius: 7px; padding: 6px 10px; box-shadow: none; }
+entry:focus { border-color: @shark_accent; }
+.error-text { color: @error_color; }
+*:focus-visible { outline: 2px solid @shark_accent; outline-offset: -2px; }
 
-/* Empty State */
-.empty-state-title {
-    font-size: 16px;
-    font-weight: 600;
-    color: alpha(@theme_fg_color, 0.7);
-    margin-top: 8px;
+/* A focused search surface, using the same system palette as the browser. */
+window.search-palette {
+    background: @shark_bg;
+    color: @shark_text;
+    border: 1px solid @shark_line;
+    border-radius: 12px;
 }
-
-.empty-state-subtitle {
-    font-size: 13px;
-    color: alpha(@theme_fg_color, 0.45);
+.palette-input { margin: 10px; }
+.palette-input searchentry {
+    background: alpha(@shark_text, 0.04);
+    color: @shark_text;
+    border: 1px solid @shark_line;
+    border-radius: 8px;
+    box-shadow: none;
+    padding: 10px;
+    min-height: 24px;
 }
-
-.dim-label {
-    color: alpha(@theme_fg_color, 0.55);
-    font-size: 12px;
-}
-
-.error-text {
-    color: #e01b24;
-    font-size: 12px;
-}
+.palette-input searchentry:focus-within { border-color: @shark_accent; }
+.palette-scope { margin: 4px 18px 10px; font-size: 12px; color: @shark_muted; }
+.palette-results { padding: 4px 10px; }
+.palette-results > row { border-radius: 7px; margin: 2px 0; }
+.palette-results > row:selected { background: alpha(@shark_accent, 0.14); color: @shark_text; }
+.palette-result { padding: 10px; }
+.palette-result image { color: @shark_muted; }
+.palette-result-path { font-size: 12px; color: @shark_muted; }
+.palette-status { padding: 10px 18px; color: @shark_muted; font-size: 12px; }
+.palette-hint { border-top: 1px solid @shark_line; padding: 12px 18px; color: @shark_muted; font-size: 11px; }
