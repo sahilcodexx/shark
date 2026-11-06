@@ -148,64 +148,52 @@ pub fn recursive_search_async(
     sender: Sender<ScanMessage>,
 ) {
     std::thread::spawn(move || {
-        let query_lower = query.to_lowercase();
+        let query_lower = query.trim().to_lowercase();
+        if query_lower.is_empty() {
+            let _ = sender.send(ScanMessage::Completed { total_items: 0, total_bytes: 0 });
+            return;
+        }
         let mut current_batch = Vec::with_capacity(BATCH_SIZE);
         let mut total_items = 0;
         let mut total_bytes = 0;
-
-        let mut stack = vec![(root, 0usize)];
-        const MAX_DEPTH: usize = 12;
-
-        while let Some((dir, depth)) = stack.pop() {
-            if cancellable.load(Ordering::Relaxed) {
-                return;
-            }
-
-            if depth > MAX_DEPTH {
-                continue;
-            }
-
-            let Ok(read_dir) = std::fs::read_dir(&dir) else {
-                continue;
-            };
-
-            for item in read_dir.flatten() {
-                if cancellable.load(Ordering::Relaxed) {
+        let mut last_batch = std::time::Instant::now();
+        let mut stack = vec![root.clone()];
+        while let Some(dir) = stack.pop() {
+            if cancellable.load(Ordering::Relaxed) { return; }
+            let read_dir = match std::fs::read_dir(&dir) {
+                Ok(entries) => entries,
+                Err(error) if dir == root => {
+                    let _ = sender.send(ScanMessage::Error(format!("Cannot search {}: {}", dir.display(), error)));
                     return;
                 }
-
+                // A disappearing or inaccessible subfolder must not stop the search.
+                Err(_) => continue,
+            };
+            for item in read_dir.flatten() {
+                if cancellable.load(Ordering::Relaxed) { return; }
                 let path = item.path();
-                let Ok(entry) = FileEntry::from_path(&path) else {
-                    continue;
-                };
-
-                if entry.is_directory && !entry.is_symlink {
-                    stack.push((path.clone(), depth + 1));
+                // DirEntry type does not follow symlinks, preventing traversal loops.
+                if item.file_type().is_ok_and(|kind| kind.is_dir()) { stack.push(path.clone()); }
+                if !item.file_name().to_string_lossy().to_lowercase().contains(&query_lower) { continue; }
+                // Only matches need full metadata, not every file in the tree.
+                let Ok(entry) = FileEntry::from_path(&path) else { continue; };
+                total_items += 1;
+                total_bytes += entry.size;
+                current_batch.push(entry);
+                if total_items == 1 || current_batch.len() >= BATCH_SIZE
+                    || last_batch.elapsed() >= std::time::Duration::from_millis(80) {
+                    let batch = std::mem::replace(&mut current_batch, Vec::with_capacity(BATCH_SIZE));
+                    if sender.send(ScanMessage::Batch(batch)).is_err() { return; }
+                    last_batch = std::time::Instant::now();
                 }
-
-                if entry.name.to_lowercase().contains(&query_lower) {
-                    total_items += 1;
-                    total_bytes += entry.size;
-                    current_batch.push(entry);
-
-                    if current_batch.len() >= BATCH_SIZE {
-                        let batch = std::mem::replace(&mut current_batch, Vec::with_capacity(BATCH_SIZE));
-                        if sender.send(ScanMessage::Batch(batch)).is_err() {
-                            return;
-                        }
-                    }
-                }
+            }
+            if !current_batch.is_empty() && last_batch.elapsed() >= std::time::Duration::from_millis(80) {
+                let batch = std::mem::replace(&mut current_batch, Vec::with_capacity(BATCH_SIZE));
+                if sender.send(ScanMessage::Batch(batch)).is_err() { return; }
+                last_batch = std::time::Instant::now();
             }
         }
-
-        if !current_batch.is_empty()
-            && sender.send(ScanMessage::Batch(current_batch)).is_err() {
-                return;
-            }
-
-        let _ = sender.send(ScanMessage::Completed {
-            total_items,
-            total_bytes,
-        });
+        if !current_batch.is_empty() && sender.send(ScanMessage::Batch(current_batch)).is_err() { return; }
+        let _ = sender.send(ScanMessage::Completed { total_items, total_bytes });
     });
 }
