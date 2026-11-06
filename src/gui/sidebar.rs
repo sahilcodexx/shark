@@ -14,6 +14,7 @@ pub struct Sidebar {
     pub container: gtk4::Box,
     places_list: gtk4::ListBox,
     bookmarks_list: gtk4::ListBox,
+    bookmarks_section: gtk4::Box,
     drives_list: gtk4::ListBox,
     config: Rc<RefCell<Config>>,
     on_navigate: NavigateCallback,
@@ -24,7 +25,7 @@ impl Sidebar {
     pub fn new(config: Rc<RefCell<Config>>) -> Self {
         let container = gtk4::Box::builder()
             .orientation(gtk4::Orientation::Vertical)
-            .width_request(200)
+            .width_request(224)
             .css_classes(["sidebar"])
             .build();
 
@@ -36,16 +37,16 @@ impl Sidebar {
 
         let inner_box = gtk4::Box::builder()
             .orientation(gtk4::Orientation::Vertical)
-            .spacing(16)
-            .margin_start(10)
-            .margin_end(10)
-            .margin_top(12)
+            .spacing(8)
+            .margin_start(12)
+            .margin_end(12)
+            .margin_top(10)
             .margin_bottom(12)
             .build();
 
         // 1. Places Header & List
         let places_header = gtk4::Label::builder()
-            .label("PLACES")
+            .label("Places")
             .halign(gtk4::Align::Start)
             .css_classes(["sidebar-section-header"])
             .build();
@@ -58,7 +59,7 @@ impl Sidebar {
         // 2. Bookmarks Header & List
         let bookmarks_header_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
         let bookmarks_header = gtk4::Label::builder()
-            .label("BOOKMARKS")
+            .label("Bookmarks")
             .halign(gtk4::Align::Start)
             .hexpand(true)
             .css_classes(["sidebar-section-header"])
@@ -73,7 +74,7 @@ impl Sidebar {
 
         // 3. Drives Header & List
         let drives_header = gtk4::Label::builder()
-            .label("DRIVES")
+            .label("Locations")
             .halign(gtk4::Align::Start)
             .css_classes(["sidebar-section-header"])
             .build();
@@ -85,8 +86,10 @@ impl Sidebar {
 
         inner_box.append(&places_header);
         inner_box.append(&places_list);
-        inner_box.append(&bookmarks_header_box);
-        inner_box.append(&bookmarks_list);
+        let bookmarks_section = gtk4::Box::new(gtk4::Orientation::Vertical, 8);
+        bookmarks_section.append(&bookmarks_header_box);
+        bookmarks_section.append(&bookmarks_list);
+        inner_box.append(&bookmarks_section);
         inner_box.append(&drives_header);
         inner_box.append(&drives_list);
 
@@ -100,6 +103,7 @@ impl Sidebar {
             container,
             places_list,
             bookmarks_list,
+            bookmarks_section,
             drives_list,
             config,
             on_navigate,
@@ -115,19 +119,24 @@ impl Sidebar {
     }
 
     /// Add a standard sidebar row.
-    fn create_row(icon_name: &str, label: &str, path: PathBuf) -> gtk4::ListBoxRow {
+    fn create_row(icon_name: &str, label: &str, path: PathBuf, icon_class: &str) -> gtk4::ListBoxRow {
         let row = gtk4::ListBoxRow::new();
+        row.add_css_class("sidebar-row");
+
         let box_w = gtk4::Box::builder()
             .orientation(gtk4::Orientation::Horizontal)
-            .spacing(10)
-            .margin_start(8)
-            .margin_end(8)
-            .margin_top(6)
-            .margin_bottom(6)
+            .spacing(12)
+            .margin_start(12)
+            .margin_end(12)
+            .margin_top(8)
+            .margin_bottom(8)
             .build();
 
         let icon = gtk4::Image::from_icon_name(icon_name);
-        icon.set_pixel_size(18);
+        icon.set_pixel_size(17);
+        if !icon_class.is_empty() {
+            icon.add_css_class(icon_class);
+        }
 
         let lbl = gtk4::Label::builder()
             .label(label)
@@ -139,6 +148,7 @@ impl Sidebar {
         box_w.append(&lbl);
         row.set_child(Some(&box_w));
 
+        row.set_tooltip_text(Some(&path.to_string_lossy()));
         row.set_widget_name(&path.to_string_lossy());
 
         row
@@ -149,21 +159,20 @@ impl Sidebar {
         let home = glib::home_dir();
 
         let items = [
-            ("user-home-symbolic", "Home", home.clone()),
-            ("user-desktop-symbolic", "Desktop", home.join("Desktop")),
-            ("folder-documents-symbolic", "Documents", home.join("Documents")),
-            ("folder-download-symbolic", "Downloads", home.join("Downloads")),
-            ("folder-music-symbolic", "Music", home.join("Music")),
-            ("folder-pictures-symbolic", "Pictures", home.join("Pictures")),
-            ("folder-videos-symbolic", "Videos", home.join("Videos")),
-            ("user-trash-symbolic", "Trash", PathBuf::from("trash:///")),
-            ("drive-harddisk-symbolic", "File System", PathBuf::from("/")),
+            ("user-home-symbolic", "Home", home.clone(), "icon-home"),
+            ("user-desktop-symbolic", "Desktop", home.join("Desktop"), "icon-desktop"),
+            ("folder-documents-symbolic", "Documents", home.join("Documents"), "icon-documents"),
+            ("folder-download-symbolic", "Downloads", home.join("Downloads"), "icon-downloads"),
+            ("folder-music-symbolic", "Music", home.join("Music"), "icon-music"),
+            ("folder-pictures-symbolic", "Pictures", home.join("Pictures"), "icon-pictures"),
+            ("folder-videos-symbolic", "Videos", home.join("Videos"), "icon-videos"),
+            ("user-trash-symbolic", "Trash", PathBuf::from("trash:///"), "icon-trash"),
         ];
 
-        for (icon, name, path) in items {
+        for (icon, name, path, icon_class) in items {
             // Include Trash and Root, and home directories if they exist or are home itself
             if path.to_string_lossy() == "trash:///" || path == *"/" || path == home || path.exists() {
-                let row = Self::create_row(icon, name, path);
+                let row = Self::create_row(icon, name, path, icon_class);
                 self.places_list.append(&row);
             }
         }
@@ -178,13 +187,16 @@ impl Sidebar {
 
         let config = self.config.borrow();
         for bookmark in &config.bookmarks {
-            if bookmark.exists() {
+            let home = glib::home_dir();
+            let standard_place = ["", "Desktop", "Documents", "Downloads", "Music", "Pictures", "Videos"]
+                .iter().any(|name| *bookmark == home.join(name));
+            if bookmark.exists() && !standard_place {
                 let name = bookmark
                     .file_name()
                     .map(|n| n.to_string_lossy().to_string())
                     .unwrap_or_else(|| bookmark.to_string_lossy().to_string());
 
-                let row = Self::create_row("folder-symbolic", &name, bookmark.clone());
+                let row = Self::create_row("folder-symbolic", &name, bookmark.clone(), "icon-bookmark");
 
                 // Right click context menu to remove bookmark
                 let gesture = gtk4::GestureClick::builder().button(3).build();
@@ -224,21 +236,56 @@ impl Sidebar {
                 self.bookmarks_list.append(&row);
             }
         }
+        self.bookmarks_section.set_visible(self.bookmarks_list.first_child().is_some());
     }
 
-    /// Populate standard drive mounts.
+    /// Show actual mounted local drives and update when devices change.
     fn populate_drives(&self) {
-        let drives = [
-            ("drive-harddisk-symbolic", "Root", PathBuf::from("/")),
-            ("drive-removable-media-symbolic", "Mounts", PathBuf::from("/mnt")),
-            ("drive-removable-media-symbolic", "Media", PathBuf::from("/media")),
-        ];
-
-        for (icon, name, path) in drives {
-            if path.exists() {
-                let row = Self::create_row(icon, name, path);
-                self.drives_list.append(&row);
+        let monitor = gio::VolumeMonitor::get();
+        Self::update_drives(&self.drives_list, &monitor);
+        let weak_list = self.drives_list.downgrade();
+        let refresh = move |monitor: &gio::VolumeMonitor, _: &gio::Mount| {
+            if let Some(list) = weak_list.upgrade() {
+                Self::update_drives(&list, monitor);
             }
+        };
+        let handlers = RefCell::new(vec![
+            monitor.connect_mount_added(refresh.clone()),
+            monitor.connect_mount_removed(refresh.clone()),
+            monitor.connect_mount_changed(refresh),
+        ]);
+        self.drives_list.connect_destroy(move |_| {
+            for handler in handlers.borrow_mut().drain(..) {
+                monitor.disconnect(handler);
+            }
+        });
+    }
+
+    fn update_drives(list: &gtk4::ListBox, monitor: &gio::VolumeMonitor) {
+        let selected_path = list.selected_row().map(|row| row.widget_name());
+        while let Some(child) = list.first_child() {
+            list.remove(&child);
+        }
+        list.append(&Self::create_row(
+            "drive-harddisk-symbolic", "File System", PathBuf::from("/"), "icon-drive",
+        ));
+        for mount in monitor.mounts() {
+            if mount.is_shadowed() { continue; }
+            if let Some(path) = mount.root().path() {
+                if path == Path::new("/") { continue; }
+                let row = Self::create_row(
+                    "drive-removable-media-symbolic", &mount.name(), path, "icon-drive",
+                );
+                list.append(&row);
+            }
+        }
+        let mut child = list.first_child();
+        while let Some(widget) = child {
+            if let Some(row) = widget.downcast_ref::<gtk4::ListBoxRow>()
+                && selected_path.as_ref() == Some(&row.widget_name()) {
+                list.select_row(Some(row));
+            }
+            child = widget.next_sibling();
         }
     }
 
@@ -274,21 +321,20 @@ impl Sidebar {
     /// Highlight current directory in sidebar if matches a place or bookmark.
     pub fn set_current_path(&self, current: &Path) {
         let current_str = current.to_string_lossy();
-        let unselect_if_mismatch = |list: &gtk4::ListBox| {
+        let mut matched = false;
+        for list in [&self.places_list, &self.bookmarks_list, &self.drives_list] {
+            list.unselect_all();
             let mut child = list.first_child();
             while let Some(row) = child {
-                if let Some(r) = row.downcast_ref::<gtk4::ListBoxRow>()
-                    && r.widget_name().as_str() == current_str {
-                        list.select_row(Some(r));
-                        return;
-                    }
+                if !matched
+                    && let Some(r) = row.downcast_ref::<gtk4::ListBoxRow>()
+                    && r.widget_name().as_str() == current_str
+                {
+                    list.select_row(Some(r));
+                    matched = true;
+                }
                 child = row.next_sibling();
             }
-            list.unselect_all();
-        };
-
-        unselect_if_mismatch(&self.places_list);
-        unselect_if_mismatch(&self.bookmarks_list);
-        unselect_if_mismatch(&self.drives_list);
+        }
     }
 }
