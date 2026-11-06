@@ -3,7 +3,7 @@
 use crate::config::Config;
 use crate::filesystem::{
     copy_paths_async, create_file, create_folder, delete_paths_permanent, move_paths_async,
-    recursive_search_async, rename_path, scan_directory_async, trash_paths, ConflictResolution,
+    rename_path, scan_directory_async, trash_paths, ConflictResolution,
     DirectoryMonitor, OpProgress, ScanMessage,
 };
 use crate::gui::clipboard::AppClipboard;
@@ -14,6 +14,7 @@ use crate::gui::dialogs::{
 use crate::gui::file_view::FileView;
 use crate::gui::properties_dialog::show_properties_dialog;
 use crate::gui::sidebar::Sidebar;
+use crate::gui::search_palette::SearchPalette;
 use crate::gui::toolbar::Toolbar;
 use crate::models::FileEntry;
 use crate::navigation::NavigationHistory;
@@ -35,9 +36,7 @@ pub struct SharkWindow {
     clipboard: Rc<RefCell<AppClipboard>>,
     current_scan_cancel: Rc<RefCell<Arc<AtomicBool>>>,
     monitor: Rc<RefCell<Option<DirectoryMonitor>>>,
-    search_revealer: gtk4::Revealer,
-    search_entry: gtk4::SearchEntry,
-    recursive_search_check: gtk4::CheckButton,
+    search_palette: Rc<SearchPalette>,
     progress_revealer: gtk4::Revealer,
     progress_bar: gtk4::ProgressBar,
     progress_label: gtk4::Label,
@@ -63,7 +62,6 @@ impl SharkWindow {
 
         let toolbar = Toolbar::new(config.clone());
         window.set_titlebar(Some(&toolbar.header_bar));
-
         let sidebar = Sidebar::new(config.clone());
         let file_view = FileView::new();
 
@@ -71,35 +69,7 @@ impl SharkWindow {
         file_view.set_view_mode(&config.borrow().view_mode);
         file_view.set_sort(&config.borrow().sort_by, config.borrow().sort_reversed);
 
-        // Search Bar Revealer
-        let search_revealer = gtk4::Revealer::builder()
-            .transition_type(gtk4::RevealerTransitionType::SlideDown)
-            .reveal_child(false)
-            .build();
-
-        let search_box = gtk4::Box::builder()
-            .orientation(gtk4::Orientation::Horizontal)
-            .spacing(12)
-            .css_classes(["search-container"])
-            .build();
-
-        let search_entry = gtk4::SearchEntry::builder()
-            .placeholder_text("Search files...")
-            .hexpand(true)
-            .build();
-
-        let recursive_search_check = gtk4::CheckButton::builder()
-            .label("Recursive Search")
-            .active(false)
-            .build();
-
-        let close_search_btn = gtk4::Button::from_icon_name("window-close-symbolic");
-        close_search_btn.add_css_class("flat");
-
-        search_box.append(&search_entry);
-        search_box.append(&recursive_search_check);
-        search_box.append(&close_search_btn);
-        search_revealer.set_child(Some(&search_box));
+        let search_palette = SearchPalette::new(&window);
 
         // Progress Bar Revealer (for background copy/move/trash)
         let progress_revealer = gtk4::Revealer::builder()
@@ -168,8 +138,8 @@ impl SharkWindow {
             .vexpand(true)
             .build();
 
-        content_column.append(&search_revealer);
         content_column.append(&progress_revealer);
+        content_column.append(&toolbar.folder_title);
         content_column.append(&view_overlay);
 
         // Status Bar at Bottom
@@ -197,9 +167,10 @@ impl SharkWindow {
         // Paned (Sidebar on left, Main content on right)
         let paned = gtk4::Paned::builder()
             .orientation(gtk4::Orientation::Horizontal)
+            .resize_start_child(false)
             .start_child(&sidebar.container)
             .end_child(&content_column)
-            .position(220)
+            .position(240)
             .shrink_start_child(false)
             .shrink_end_child(false)
             .hexpand(true)
@@ -224,9 +195,7 @@ impl SharkWindow {
             clipboard,
             current_scan_cancel,
             monitor,
-            search_revealer,
-            search_entry,
-            recursive_search_check,
+            search_palette,
             progress_revealer,
             progress_bar,
             progress_label,
@@ -238,7 +207,7 @@ impl SharkWindow {
             active_popover,
         });
 
-        shark.setup_bindings(close_search_btn);
+        shark.setup_bindings();
         shark.setup_key_shortcuts();
 
         // Initial navigation
@@ -248,7 +217,7 @@ impl SharkWindow {
     }
 
     /// Wire all UI signals, callbacks and event listeners.
-    fn setup_bindings(self: &Rc<Self>, close_search_btn: gtk4::Button) {
+    fn setup_bindings(self: &Rc<Self>) {
         // Navigation buttons
         let shark_b = self.clone();
         self.toolbar.back_btn.connect_clicked(move |_| {
@@ -327,56 +296,22 @@ impl SharkWindow {
             show_about_dialog(&shark_ab.window);
         });
 
-        // Search button toggle
-        let search_rev = self.search_revealer.clone();
-        let search_ent = self.search_entry.clone();
-        self.toolbar.search_btn.connect_toggled(move |btn| {
-            let active = btn.is_active();
-            search_rev.set_reveal_child(active);
-            if active {
-                search_ent.grab_focus();
+        let weak = Rc::downgrade(self);
+        self.toolbar.search_btn.connect_toggled(move |button| {
+            if let Some(shark) = weak.upgrade() {
+                if button.is_active() {
+                    shark.search_palette.show(
+                        shark.history.borrow().current().to_path_buf(),
+                        shark.config.borrow().show_hidden,
+                    );
+                } else { shark.search_palette.hide(); }
             }
         });
-
-        // Close search button
-        let search_btn = self.toolbar.search_btn.clone();
-        close_search_btn.connect_clicked(move |_| {
-            search_btn.set_active(false);
-        });
-
-        // Search entry live filtering
-        let shark_se = self.clone();
-        self.search_entry.connect_search_changed(move |entry| {
-            let query = entry.text().to_string();
-            let is_recursive = shark_se.recursive_search_check.is_active();
-
-            if is_recursive && query.len() >= 2 {
-                shark_se.start_recursive_search(query);
-            } else {
-                shark_se.file_view.set_search_query(&query);
-                shark_se.update_status_bar();
-            }
-        });
-
-        // Search clear
-        let shark_stop_s = self.clone();
-        self.search_entry.connect_stop_search(move |_| {
-            shark_stop_s.toolbar.search_btn.set_active(false);
-            shark_stop_s.file_view.set_search_query("");
-            shark_stop_s.update_status_bar();
-        });
-
-        // Recursive search check button
-        let shark_rec = self.clone();
-        self.recursive_search_check.connect_toggled(move |c| {
-            if c.is_active() {
-                let query = shark_rec.search_entry.text().to_string();
-                if query.len() >= 2 {
-                    shark_rec.start_recursive_search(query);
-                }
-            } else {
-                shark_rec.reload_current_directory();
-            }
+        let button = self.toolbar.search_btn.clone();
+        self.search_palette.window.connect_hide(move |_| button.set_active(false));
+        let weak = Rc::downgrade(self);
+        self.search_palette.connect_activate(move |entry| {
+            if let Some(shark) = weak.upgrade() { shark.on_item_activated(entry); }
         });
 
         // File activation (Double-click or Enter)
@@ -687,61 +622,13 @@ impl SharkWindow {
         scan_directory_async(path, new_cancel, sender);
     }
 
-    /// Start recursive search in current directory.
-    fn start_recursive_search(self: &Rc<Self>, query: String) {
-        self.current_scan_cancel.borrow().store(true, Ordering::Relaxed);
-        let new_cancel = Arc::new(AtomicBool::new(false));
-        *self.current_scan_cancel.borrow_mut() = new_cancel.clone();
-
-        self.file_view.clear();
-        self.empty_state_box.set_visible(false);
-
-        let cur = self.history.borrow().current().to_path_buf();
-        let (sender, receiver) = std::sync::mpsc::channel();
-        let shark_rx = self.clone();
-
-        glib::idle_add_local(move || {
-            loop {
-                match receiver.try_recv() {
-                    Ok(ScanMessage::Batch(entries)) => {
-                        shark_rx.file_view.add_batch(entries);
-                        shark_rx.update_status_bar();
-                    }
-                    Ok(ScanMessage::Completed { total_items, .. }) => {
-                        shark_rx.update_status_bar();
-                        if total_items == 0 {
-                            shark_rx.empty_state_title.set_text("No Results Found");
-                            shark_rx.empty_state_sub.set_text("Try a different search query");
-                            shark_rx.empty_state_box.set_visible(true);
-                        }
-                        return glib::ControlFlow::Break;
-                    }
-                    Ok(ScanMessage::Error(e)) => {
-                        shark_rx.empty_state_title.set_text("Search Error");
-                        shark_rx.empty_state_sub.set_text(&e);
-                        shark_rx.empty_state_box.set_visible(true);
-                        return glib::ControlFlow::Break;
-                    }
-                    Err(std::sync::mpsc::TryRecvError::Empty) => {
-                        return glib::ControlFlow::Continue;
-                    }
-                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                        return glib::ControlFlow::Break;
-                    }
-                }
-            }
-        });
-
-        recursive_search_async(cur, query, new_cancel, sender);
-    }
-
     /// Item activated (double click or Enter).
     fn on_item_activated(self: &Rc<Self>, entry: FileEntry) {
         if entry.is_directory {
             self.navigate_to(entry.path);
         } else {
             // Open with Linux default application
-            let uri = format!("file://{}", entry.path.to_string_lossy());
+            let uri = gio::File::for_path(&entry.path).uri();
             if gio::AppInfo::launch_default_for_uri(&uri, gio::AppLaunchContext::NONE).is_err() {
                 // Fallback to xdg-open
                 let _ = std::process::Command::new("xdg-open")
