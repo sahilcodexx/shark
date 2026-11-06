@@ -1,0 +1,16 @@
+# Cargo default ignores
+/target/
+/*.rs.upgrade
+
+# Visual Studio Code
+.vscode/
+
+# SQLite database (if used)
+*.db
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Config files (local only)
+/.config/shark/config.json
