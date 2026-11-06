@@ -7,7 +7,7 @@ use std::rc::Rc;
 
 #[derive(Clone)]
 pub struct FileView {
-    pub container: gtk4::ScrolledWindow,
+    pub container: gtk4::Stack,
     pub stack: gtk4::Stack,
     pub list_store: gio::ListStore,
     _filter_model: gtk4::FilterListModel,
@@ -123,14 +123,16 @@ impl FileView {
 
             let card = gtk4::Box::builder()
                 .orientation(gtk4::Orientation::Vertical)
-                .spacing(6)
+                .spacing(4)
                 .halign(gtk4::Align::Center)
                 .valign(gtk4::Align::Start)
                 .css_classes(["file-grid-item"])
                 .build();
 
             let icon = gtk4::Image::builder()
-                .pixel_size(56)
+                .pixel_size(96)
+                .width_request(96)
+                .height_request(96)
                 .halign(gtk4::Align::Center)
                 .build();
 
@@ -139,7 +141,8 @@ impl FileView {
                 .justify(gtk4::Justification::Center)
                 .wrap(true)
                 .wrap_mode(gtk4::pango::WrapMode::WordChar)
-                .max_width_chars(12)
+                .width_chars(18)
+                .max_width_chars(18)
                 .lines(2)
                 .ellipsize(gtk4::pango::EllipsizeMode::End)
                 .css_classes(["file-grid-label"])
@@ -147,26 +150,44 @@ impl FileView {
 
             card.append(&icon);
             card.append(&label);
+            let detail = gtk4::Label::builder()
+                .css_classes(["file-grid-detail"])
+                .build();
+            card.append(&detail);
             item.set_child(Some(&card));
         });
 
-        grid_factory.connect_bind(|_, list_item| {
+        // Decode once; every visible folder shares the same texture.
+        let folder_texture = gtk4::gdk_pixbuf::Pixbuf::from_read(std::io::Cursor::new(
+            include_bytes!("../../assets/icons/folder.svg").as_slice(),
+        )).ok().map(|pixbuf| gtk4::gdk::Texture::for_pixbuf(&pixbuf));
+        grid_factory.connect_bind(move |_, list_item| {
             let item = list_item.downcast_ref::<gtk4::ListItem>().unwrap();
             let file_obj = item.item().and_downcast::<FileObject>().unwrap();
             let card = item.child().and_downcast::<gtk4::Box>().unwrap();
 
             let icon = card.first_child().and_downcast::<gtk4::Image>().unwrap();
-            let label = card.last_child().and_downcast::<gtk4::Label>().unwrap();
+            let label = icon.next_sibling().and_downcast::<gtk4::Label>().unwrap();
+            let detail = card.last_child().and_downcast::<gtk4::Label>().unwrap();
 
-            icon.set_icon_name(Some(&file_obj.icon_name()));
+            if file_obj.is_directory() && !file_obj.with_entry(|e| e.is_symlink)
+                && let Some(texture) = &folder_texture {
+                icon.set_paintable(Some(texture));
+            } else {
+                icon.set_icon_name(Some(&file_obj.icon_name()));
+            }
+            detail.set_text(&file_obj.with_entry(|entry| {
+                if entry.is_directory { "Folder".to_string() } else { entry.formatted_size() }
+            }));
             label.set_text(&file_obj.name());
+            card.set_tooltip_text(Some(&file_obj.name()));
         });
 
         let grid_view = gtk4::GridView::builder()
             .model(&selection_model)
             .factory(&grid_factory)
-            .max_columns(16)
-            .min_columns(3)
+            .max_columns(12)
+            .min_columns(1)
             .enable_rubberband(true)
             .build();
 
@@ -182,7 +203,7 @@ impl FileView {
                 .build();
 
             let icon = gtk4::Image::builder()
-                .pixel_size(24)
+                .pixel_size(18)
                 .build();
 
             let name_label = gtk4::Label::builder()
@@ -258,23 +279,24 @@ impl FileView {
             .enable_rubberband(true)
             .build();
 
-        let stack = gtk4::Stack::builder()
-            .transition_type(gtk4::StackTransitionType::Crossfade)
+        // Scrollable views must directly own their adjustments for virtualization.
+        let grid_scroll = gtk4::ScrolledWindow::builder()
+            .hscrollbar_policy(gtk4::PolicyType::Never)
+            .child(&grid_view)
             .build();
-
-        stack.add_named(&grid_view, Some("grid"));
-        stack.add_named(&list_view, Some("list"));
-
-        let scrolled_window = gtk4::ScrolledWindow::builder()
+        let list_scroll = gtk4::ScrolledWindow::builder()
             .hscrollbar_policy(gtk4::PolicyType::Automatic)
-            .vscrollbar_policy(gtk4::PolicyType::Automatic)
-            .child(&stack)
+            .child(&list_view)
+            .build();
+        let stack = gtk4::Stack::builder()
             .hexpand(true)
             .vexpand(true)
             .build();
+        stack.add_named(&grid_scroll, Some("grid"));
+        stack.add_named(&list_scroll, Some("list"));
 
         Self {
-            container: scrolled_window,
+            container: stack.clone(),
             stack,
             list_store,
             _filter_model: filter_model,
