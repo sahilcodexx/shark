@@ -15,6 +15,7 @@ type ActionCallback = Rc<RefCell<Option<Box<dyn Fn()>>>>;
 #[derive(Clone)]
 pub struct Toolbar {
     pub header_bar: gtk4::HeaderBar,
+    pub folder_title: gtk4::Label,
     pub back_btn: gtk4::Button,
     pub forward_btn: gtk4::Button,
     pub up_btn: gtk4::Button,
@@ -46,28 +47,40 @@ impl Toolbar {
             .css_classes(["toolbar"])
             .build();
 
+        let brand = gtk4::Box::new(gtk4::Orientation::Horizontal, 12);
+        brand.set_width_request(208);
+        brand.add_css_class("toolbar-brand");
+        let brand_icon = gtk4::Image::from_icon_name("system-file-manager-symbolic");
+        brand_icon.set_pixel_size(22);
+        brand.append(&brand_icon);
+        brand.append(&gtk4::Label::new(Some("Shark")));
+        header_bar.pack_start(&brand);
+
         // --- Left Box (Nav buttons) ---
-        let left_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 4);
+        let left_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 3);
+        left_box.set_valign(gtk4::Align::Center);
 
         let back_btn = gtk4::Button::from_icon_name("go-previous-symbolic");
         back_btn.set_tooltip_text(Some("Back (Alt+Left)"));
         back_btn.set_sensitive(false);
+        back_btn.add_css_class("nav-btn");
 
         let forward_btn = gtk4::Button::from_icon_name("go-next-symbolic");
         forward_btn.set_tooltip_text(Some("Forward (Alt+Right)"));
         forward_btn.set_sensitive(false);
+        forward_btn.add_css_class("nav-btn");
 
         let up_btn = gtk4::Button::from_icon_name("go-up-symbolic");
         up_btn.set_tooltip_text(Some("Parent Folder (Alt+Up)"));
         up_btn.set_sensitive(false);
+        up_btn.add_css_class("nav-btn");
 
         let refresh_btn = gtk4::Button::from_icon_name("view-refresh-symbolic");
         refresh_btn.set_tooltip_text(Some("Reload (Ctrl+R)"));
+        refresh_btn.add_css_class("nav-btn");
 
         left_box.append(&back_btn);
         left_box.append(&forward_btn);
-        left_box.append(&up_btn);
-        left_box.append(&refresh_btn);
 
         header_bar.pack_start(&left_box);
 
@@ -75,10 +88,12 @@ impl Toolbar {
         let center_box = gtk4::Box::builder()
             .orientation(gtk4::Orientation::Horizontal)
             .spacing(4)
+            .valign(gtk4::Align::Center)
             .css_classes(["breadcrumb-container"])
             .build();
 
         let path_stack = gtk4::Stack::builder()
+            .hexpand(true)
             .transition_type(gtk4::StackTransitionType::Crossfade)
             .build();
 
@@ -89,7 +104,7 @@ impl Toolbar {
 
         let location_entry = gtk4::Entry::builder()
             .placeholder_text("Enter location...")
-            .width_chars(32)
+            .width_chars(16)
             .hexpand(true)
             .build();
 
@@ -100,13 +115,22 @@ impl Toolbar {
         location_toggle_btn.set_tooltip_text(Some("Edit Location (Ctrl+L)"));
         location_toggle_btn.add_css_class("flat");
 
-        center_box.append(&path_stack);
+        let path_scroll = gtk4::ScrolledWindow::builder()
+            .hscrollbar_policy(gtk4::PolicyType::External)
+            .vscrollbar_policy(gtk4::PolicyType::Never)
+            .min_content_width(120)
+            .max_content_width(480)
+            .propagate_natural_width(true)
+            .child(&path_stack)
+            .build();
+        center_box.append(&path_scroll);
         center_box.append(&location_toggle_btn);
 
         header_bar.set_title_widget(Some(&center_box));
 
         // --- Right Box (Search, New Folder, View Mode, Sort, Menu) ---
         let right_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
+        right_box.set_valign(gtk4::Align::Center);
 
         let search_btn = gtk4::ToggleButton::builder()
             .icon_name("edit-find-symbolic")
@@ -121,7 +145,8 @@ impl Toolbar {
         // View switcher (Grid vs List)
         let view_box = gtk4::Box::builder()
             .orientation(gtk4::Orientation::Horizontal)
-            .css_classes(["linked"])
+            .valign(gtk4::Align::Center)
+            .css_classes(["view-switcher"])
             .build();
 
         let view_grid_btn = gtk4::ToggleButton::builder()
@@ -135,6 +160,8 @@ impl Toolbar {
             .tooltip_text("List View")
             .active(config.borrow().view_mode == "list")
             .build();
+
+        view_list_btn.set_group(Some(&view_grid_btn));
 
         view_box.append(&view_grid_btn);
         view_box.append(&view_list_btn);
@@ -220,6 +247,11 @@ impl Toolbar {
             .halign(gtk4::Align::Fill)
             .build();
 
+        up_btn.set_label("Parent Folder (Alt+Up)");
+        refresh_btn.set_label("Reload (Ctrl+R)");
+        app_menu_box.append(&up_btn);
+        app_menu_box.append(&refresh_btn);
+        app_menu_box.append(&gtk4::Separator::new(gtk4::Orientation::Horizontal));
         app_menu_box.append(&hidden_check);
         app_menu_box.append(&gtk4::Separator::new(gtk4::Orientation::Horizontal));
         app_menu_box.append(&bookmark_btn);
@@ -246,7 +278,15 @@ impl Toolbar {
         let on_new_folder = Rc::new(RefCell::new(None));
         let on_about = Rc::new(RefCell::new(None));
 
+        let folder_title = gtk4::Label::builder()
+            .halign(gtk4::Align::Fill)
+            .xalign(0.0)
+            .ellipsize(gtk4::pango::EllipsizeMode::End)
+            .hexpand(true)
+            .css_classes(["folder-title"])
+            .build();
         let toolbar = Self {
+            folder_title,
             header_bar,
             back_btn,
             forward_btn,
@@ -326,7 +366,7 @@ impl Toolbar {
         self.location_entry.connect_activate(move |entry| {
             let text = entry.text().to_string();
             let path = PathBuf::from(&text);
-            if path.exists() {
+            if path.is_dir() {
                 path_stack_c.set_visible_child_name("breadcrumbs");
                 if let Some(ref cb) = *on_nav.borrow() {
                     cb(path);
@@ -335,6 +375,8 @@ impl Toolbar {
                 entry.add_css_class("error");
             }
         });
+
+        self.location_entry.connect_changed(|entry| entry.remove_css_class("error"));
 
         // View mode toggles
         let list_btn = self.view_list_btn.clone();
@@ -443,6 +485,13 @@ impl Toolbar {
 
     /// Update breadcrumb path buttons.
     pub fn set_path(&self, path: &Path) {
+        self.folder_title.set_text(if path == glib::home_dir() {
+            "Home"
+        } else if path == Path::new("/") {
+            "File System"
+        } else {
+            path.file_name().and_then(|s| s.to_str()).unwrap_or("Files")
+        });
         *self.current_path.borrow_mut() = path.to_path_buf();
 
         // Clear existing breadcrumbs
@@ -450,28 +499,43 @@ impl Toolbar {
             self.breadcrumb_box.remove(&child);
         }
 
-        // Build list of ancestor segments
-        let mut segments = Vec::new();
-        let mut cur = Some(path);
-        while let Some(p) = cur {
-            segments.push(p.to_path_buf());
-            cur = p.parent();
+        let home = glib::home_dir();
+        let mut segments: Vec<(PathBuf, String)> = Vec::new();
+
+        if path.starts_with(&home) {
+            segments.push((home.clone(), "Home".to_string()));
+            if let Ok(rel) = path.strip_prefix(&home) {
+                let mut accum = home.clone();
+                for comp in rel.components() {
+                    let s = comp.as_os_str().to_string_lossy().to_string();
+                    if !s.is_empty() {
+                        accum.push(&s);
+                        segments.push((accum.clone(), s));
+                    }
+                }
+            }
+        } else {
+            let mut cur = Some(path);
+            let mut raw_segs = Vec::new();
+            while let Some(p) = cur {
+                raw_segs.push(p.to_path_buf());
+                cur = p.parent();
+            }
+            raw_segs.reverse();
+            for seg in raw_segs {
+                let name = if seg == Path::new("/") {
+                    "System".to_string()
+                } else {
+                    seg.file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_else(|| "Root".to_string())
+                };
+                segments.push((seg, name));
+            }
         }
-        segments.reverse();
 
         let total = segments.len();
-        for (i, segment) in segments.into_iter().enumerate() {
-            let label = if segment == Path::new("/") {
-                "/".to_string()
-            } else if segment == glib::home_dir() {
-                "Home".to_string()
-            } else {
-                segment
-                    .file_name()
-                    .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_else(|| "/".to_string())
-            };
-
+        for (i, (segment, label)) in segments.into_iter().enumerate() {
             let btn = gtk4::Button::builder()
                 .label(&label)
                 .css_classes(["breadcrumb-button"])
@@ -493,7 +557,7 @@ impl Toolbar {
 
             if i + 1 < total {
                 let sep = gtk4::Label::builder()
-                    .label("/")
+                    .label("›")
                     .css_classes(["breadcrumb-separator"])
                     .build();
                 self.breadcrumb_box.append(&sep);
