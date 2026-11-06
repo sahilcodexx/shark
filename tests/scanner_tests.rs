@@ -1,9 +1,9 @@
 use shark::filesystem::*;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::channel;
-use std::sync::Arc;
 
 struct TempTestDir {
     path: PathBuf,
@@ -11,7 +11,11 @@ struct TempTestDir {
 
 impl TempTestDir {
     fn new(name: &str) -> Self {
-        let path = std::env::temp_dir().join(format!("shark_scanner_test_{}_{}", name, std::process::id()));
+        let path = std::env::temp_dir().join(format!(
+            "shark_scanner_test_{}_{}",
+            name,
+            std::process::id()
+        ));
         let _ = fs::remove_dir_all(&path);
         fs::create_dir_all(&path).expect("Failed to create test dir");
         Self { path }
@@ -105,4 +109,71 @@ fn test_recursive_search_async() {
     assert!(completed);
     assert_eq!(found_names.len(), 3);
     assert!(found_names.iter().all(|name| name.contains("apple")));
+}
+
+#[test]
+fn search_home_finds_downloads_and_deep_files() {
+    let home = TempTestDir::new("home_search");
+    let downloads = home.path.join("Downloads");
+    fs::create_dir(&downloads).unwrap();
+    let resume = downloads.join("Sahil-Singh-Resume.pdf");
+    fs::write(&resume, b"resume").unwrap();
+    let mut deep = home.path.clone();
+    for _ in 0..16 {
+        deep.push("nested");
+    }
+    fs::create_dir_all(&deep).unwrap();
+    let second = deep.join("RESUME.txt");
+    fs::write(&second, b"deep").unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&home.path, downloads.join("loop")).unwrap();
+    let (tx, rx) = channel();
+    recursive_search_async(
+        home.path.clone(),
+        " resume ".into(),
+        Arc::new(AtomicBool::new(false)),
+        tx,
+    );
+    let mut paths = Vec::new();
+    loop {
+        match rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap() {
+            ScanMessage::Batch(entries) => {
+                paths.extend(entries.into_iter().map(|entry| entry.path))
+            }
+            ScanMessage::Completed { total_items, .. } => {
+                assert_eq!(total_items, 2);
+                break;
+            }
+            ScanMessage::Error(error) => panic!("{error}"),
+        }
+    }
+    assert!(paths.contains(&resume));
+    assert!(paths.contains(&second));
+}
+
+#[test]
+fn search_reports_unavailable_root_and_honors_cancellation() {
+    let root = TempTestDir::new("unavailable_search");
+    let (tx, rx) = channel();
+    recursive_search_async(
+        root.path.join("missing"),
+        "resume".into(),
+        Arc::new(AtomicBool::new(false)),
+        tx,
+    );
+    assert!(matches!(
+        rx.recv_timeout(std::time::Duration::from_secs(2)).unwrap(),
+        ScanMessage::Error(_)
+    ));
+    let (tx, rx) = channel();
+    recursive_search_async(
+        root.path.clone(),
+        "resume".into(),
+        Arc::new(AtomicBool::new(true)),
+        tx,
+    );
+    assert!(matches!(
+        rx.recv_timeout(std::time::Duration::from_secs(2)),
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected)
+    ));
 }
