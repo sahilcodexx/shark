@@ -8,18 +8,20 @@ A fast, lightweight, modern Linux file manager written in Rust using GTK4. Built
 
 ## Key Highlights
 
-- **Instant Startup & Responsive UI**: Starts up in <100ms with cold memory consumption under 30MB RAM.
-- **Micro Binary Footprint**: 1.4MB optimized release binary with zero bloated dependencies (pure GTK4 + GIO + Rust standard library).
+- **Resource-conscious design**: Incremental scanning and virtualized views; startup time, RAM use, and release size still need reproducible benchmarks.
+- **System appearance**: Follows the GTK light/dark palette without forcing a dark theme.
 - **Asynchronous, Non-Blocking Engine**: Directory enumeration, recursive file searching, file copying, moving, and trash operations run on background threads with real-time UI batch streaming and cancellation.
 - **Virtualized Views**: High-performance `GtkGridView` and `GtkListView` using `gio::ListStore` virtualization capable of smoothly rendering folders containing tens of thousands of files.
 - **Full Standard File Operations**: Copy, Cut, Paste, Rename, Move to Trash, Permanent Delete, New Folder, New File, File Properties, Open With Default App.
 - **Interactive Navigation**: Clickable breadcrumb path bar with instant toggle to direct editable path entry (`Ctrl+L`), Back/Forward history stack, and Parent navigation.
 - **Places & Bookmarks Sidebar**: Instant access to standard XDG user directories (Home, Documents, Downloads, Music, Pictures, Videos, Desktop, Trash, Root), removable drives, and custom user bookmarks with right-click removal.
-- **Live Search & Filtering**: Instant case-insensitive filtering (`Ctrl+F`), recursive directory search, and show/hide hidden files (`Ctrl+H`).
+- **Search palette**: `Ctrl+F` searches the current folder and its subfolders, streams matching filenames and parent paths, and supports keyboard opening and cancellation. Hidden results follow `Ctrl+H`.
 - **Flexible Sorting**: Sort by Name, Size, Modified Date, or Type with directories grouped first and toggleable ascending/descending order.
 - **Filesystem Monitoring**: Inotify/GIO change tracking automatically refreshes open directories upon external filesystem changes.
 
 ---
+
+See [feature status and remaining work](docs/FEATURE_STATUS.md).
 
 ## Architecture Overview
 
@@ -74,7 +76,7 @@ shark/
 | Shortcut | Action |
 |:---|:---|
 | `Ctrl+L` | Toggle between breadcrumbs and direct location entry bar |
-| `Ctrl+F` | Open/focus search bar for quick filtering |
+| `Ctrl+F` | Open recursive file search palette |
 | `Ctrl+H` | Toggle hidden files and folders |
 | `Ctrl+C` | Copy selected file(s) / folder(s) |
 | `Ctrl+X` | Cut selected file(s) / folder(s) |
