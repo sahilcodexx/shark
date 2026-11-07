@@ -36,28 +36,52 @@ impl SearchPalette {
             .modal(true)
             .decorated(false)
             .resizable(false)
-            .default_width(600)
-            .default_height(440)
+            .default_width(620)
+            .default_height(460)
             .title("Search files")
             .css_classes(["search-palette"])
             .build();
+
         let content = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
-        let input_row = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
-        input_row.add_css_class("palette-input");
+        content.add_css_class("palette-container");
+
+        let input_row = gtk4::Box::new(gtk4::Orientation::Horizontal, 10);
+        input_row.add_css_class("palette-header");
+
+        let search_icon = gtk4::Image::from_icon_name("edit-find-symbolic");
+        search_icon.set_pixel_size(18);
+        search_icon.add_css_class("palette-search-icon");
+
         let entry = gtk4::SearchEntry::builder()
-            .placeholder_text("Search files and folders…")
+            .placeholder_text("Type a filename or path to search…")
             .hexpand(true)
+            .css_classes(["palette-entry"])
             .build();
+
+        let esc_badge = gtk4::Label::builder()
+            .label("Esc")
+            .css_classes(["palette-key-badge"])
+            .build();
+
         let close = gtk4::Button::from_icon_name("window-close-symbolic");
         close.set_tooltip_text(Some("Close search (Esc)"));
         close.add_css_class("flat");
+        close.add_css_class("palette-close-btn");
+
+        input_row.append(&search_icon);
         input_row.append(&entry);
+        input_row.append(&esc_badge);
         input_row.append(&close);
+
+        let divider_top = gtk4::Separator::new(gtk4::Orientation::Horizontal);
+        divider_top.add_css_class("palette-divider");
+
         let scope = gtk4::Label::builder()
             .xalign(0.0)
             .ellipsize(gtk4::pango::EllipsizeMode::Middle)
             .css_classes(["palette-scope"])
             .build();
+
         let store = gio::ListStore::new::<FileObject>();
         let selection = gtk4::SingleSelection::new(Some(store.clone()));
         let factory = gtk4::SignalListItemFactory::new();
@@ -66,11 +90,12 @@ impl SearchPalette {
             let row = gtk4::Box::new(gtk4::Orientation::Horizontal, 12);
             row.add_css_class("palette-result");
             let icon = gtk4::Image::builder().pixel_size(24).build();
-            let labels = gtk4::Box::new(gtk4::Orientation::Vertical, 4);
+            let labels = gtk4::Box::new(gtk4::Orientation::Vertical, 2);
             labels.set_hexpand(true);
             let name = gtk4::Label::builder()
                 .xalign(0.0)
                 .ellipsize(gtk4::pango::EllipsizeMode::End)
+                .css_classes(["palette-result-name"])
                 .build();
             let path = gtk4::Label::builder()
                 .xalign(0.0)
@@ -79,8 +104,15 @@ impl SearchPalette {
                 .build();
             labels.append(&name);
             labels.append(&path);
+
+            let action = gtk4::Label::builder()
+                .label("Open ↵")
+                .css_classes(["palette-action-badge"])
+                .build();
+
             row.append(&icon);
             row.append(&labels);
+            row.append(&action);
             item.set_child(Some(&row));
         });
         let folder_texture = gtk4::gdk_pixbuf::Pixbuf::from_read(std::io::Cursor::new(
@@ -94,7 +126,7 @@ impl SearchPalette {
             let file = item.item().and_downcast::<FileObject>().unwrap();
             let row = item.child().and_downcast::<gtk4::Box>().unwrap();
             let icon = row.first_child().and_downcast::<gtk4::Image>().unwrap();
-            let labels = row.last_child().and_downcast::<gtk4::Box>().unwrap();
+            let labels = icon.next_sibling().and_downcast::<gtk4::Box>().unwrap();
             let name = labels.first_child().and_downcast::<gtk4::Label>().unwrap();
             let path = labels.last_child().and_downcast::<gtk4::Label>().unwrap();
 
@@ -124,22 +156,35 @@ impl SearchPalette {
             .vexpand(true)
             .child(&results)
             .build();
+
+        let divider_bottom = gtk4::Separator::new(gtk4::Orientation::Horizontal);
+        divider_bottom.add_css_class("palette-divider");
+
+        let footer = gtk4::Box::new(gtk4::Orientation::Horizontal, 12);
+        footer.add_css_class("palette-footer");
+
         let status = gtk4::Label::builder()
             .label("Type a filename to search")
             .xalign(0.0)
+            .hexpand(true)
             .wrap(true)
             .css_classes(["palette-status"])
             .build();
         let hint = gtk4::Label::builder()
-            .label("↑ ↓  Select     Enter  Open     Esc  Close")
-            .xalign(0.0)
+            .label("↑ ↓  Navigate    ↵  Open    Esc  Close")
+            .xalign(1.0)
             .css_classes(["palette-hint"])
             .build();
+
+        footer.append(&status);
+        footer.append(&hint);
+
         content.append(&input_row);
+        content.append(&divider_top);
         content.append(&scope);
         content.append(&scroll);
-        content.append(&status);
-        content.append(&hint);
+        content.append(&divider_bottom);
+        content.append(&footer);
         window.set_child(Some(&content));
         let palette = Rc::new(Self {
             window,
