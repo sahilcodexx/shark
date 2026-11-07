@@ -134,3 +134,131 @@ pub fn get_disk_free_space<P: AsRef<Path>>(path: P) -> Option<String> {
     let free = info.attribute_uint64("filesystem::free");
     Some(format_size(free))
 }
+
+/// Check if a file is an image based on MIME type or file extension.
+pub fn is_image_entry(content_type: &str, path: &Path) -> bool {
+    if content_type.starts_with("image/") {
+        return true;
+    }
+    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+        matches!(
+            ext.to_lowercase().as_str(),
+            "png" | "jpg" | "jpeg" | "webp" | "gif" | "svg" | "bmp" | "ico" | "tiff" | "tif" | "avif"
+        )
+    } else {
+        false
+    }
+}
+
+/// Check if a file is a video based on MIME type or file extension.
+pub fn is_video_entry(content_type: &str, path: &Path) -> bool {
+    if content_type.starts_with("video/") {
+        return true;
+    }
+    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+        matches!(
+            ext.to_lowercase().as_str(),
+            "mp4" | "mkv" | "webm" | "avi" | "mov" | "flv" | "wmv" | "m4v" | "3gp" | "ts" | "mpg" | "mpeg"
+        )
+    } else {
+        false
+    }
+}
+
+/// Check if an entry is previewable media (image or video).
+pub fn is_previewable_media(content_type: &str, path: &Path) -> bool {
+    is_image_entry(content_type, path) || is_video_entry(content_type, path)
+}
+
+/// Load a media thumbnail (image or video) with Freedesktop cache lookup and on-the-fly generation.
+pub fn load_media_thumbnail(
+    path: &Path,
+    content_type: &str,
+    size: u64,
+    target_width: i32,
+    target_height: i32,
+) -> Option<gtk4::gdk::Texture> {
+    if !is_previewable_media(content_type, path) {
+        return None;
+    }
+
+    // 1. Try freedesktop thumbnail cache (~/.cache/thumbnails/large, normal, or x-large)
+    let gfile = gio::File::for_path(path);
+    let uri = gfile.uri();
+    let home = glib::home_dir();
+    if let Some(hash) = glib::compute_checksum_for_string(glib::ChecksumType::Md5, &uri) {
+        let filename = format!("{}.png", hash);
+        for folder in ["large", "normal", "x-large"] {
+            let thumb_path = home
+                .join(".cache/thumbnails")
+                .join(folder)
+                .join(&filename);
+            if thumb_path.exists() {
+                if let Ok(pixbuf) = gtk4::gdk_pixbuf::Pixbuf::from_file_at_scale(&thumb_path, target_width, target_height, true) {
+                    return Some(gtk4::gdk::Texture::for_pixbuf(&pixbuf));
+                }
+            }
+        }
+
+        // 2. Video thumbnail generation via ffmpegthumbnailer or ffmpeg
+        if is_video_entry(content_type, path) {
+            let normal_cache = home.join(".cache/thumbnails/normal");
+            let _ = std::fs::create_dir_all(&normal_cache);
+            let target_thumb = normal_cache.join(&filename);
+
+            let thumb_ok = std::process::Command::new("ffmpegthumbnailer")
+                .arg("-i")
+                .arg(path)
+                .arg("-o")
+                .arg(&target_thumb)
+                .arg("-s")
+                .arg("128")
+                .arg("-c")
+                .arg("png")
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+
+            if !thumb_ok || !target_thumb.exists() {
+                let _ = std::process::Command::new("ffmpeg")
+                    .arg("-ss")
+                    .arg("00:00:01")
+                    .arg("-i")
+                    .arg(path)
+                    .arg("-vframes")
+                    .arg("1")
+                    .arg("-vf")
+                    .arg("scale=128:-1")
+                    .arg("-y")
+                    .arg(&target_thumb)
+                    .status();
+            }
+
+            if target_thumb.exists() {
+                if let Ok(pixbuf) = gtk4::gdk_pixbuf::Pixbuf::from_file_at_scale(&target_thumb, target_width, target_height, true) {
+                    return Some(gtk4::gdk::Texture::for_pixbuf(&pixbuf));
+                }
+            }
+        }
+    }
+
+    // 3. Direct on-the-fly image thumbnail generation for images under 25MB
+    if is_image_entry(content_type, path) && size <= 25 * 1024 * 1024 {
+        if let Ok(pixbuf) = gtk4::gdk_pixbuf::Pixbuf::from_file_at_scale(path, target_width, target_height, true) {
+            return Some(gtk4::gdk::Texture::for_pixbuf(&pixbuf));
+        }
+    }
+
+    None
+}
+
+/// Load an image thumbnail (backwards-compatible alias).
+pub fn load_image_thumbnail(
+    path: &Path,
+    content_type: &str,
+    size: u64,
+    target_width: i32,
+    target_height: i32,
+) -> Option<gtk4::gdk::Texture> {
+    load_media_thumbnail(path, content_type, size, target_width, target_height)
+}
