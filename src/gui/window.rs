@@ -278,6 +278,12 @@ impl SharkWindow {
             shark_sc.file_view.set_sort(&sort_by, reversed);
         });
 
+        // Sort requested from file list view column headers
+        let shark_sr = self.clone();
+        self.file_view.connect_sort_request(move |sort_by, reversed| {
+            shark_sr.update_sort(&sort_by, reversed);
+        });
+
         // Show hidden toggle
         let shark_sh = self.clone();
         self.toolbar.connect_show_hidden_toggled(move |show| {
@@ -361,7 +367,45 @@ impl SharkWindow {
             let alt = state.contains(gdk::ModifierType::ALT_MASK);
             let shift = state.contains(gdk::ModifierType::SHIFT_MASK);
 
+            let is_editing = GtkWindowExt::focus(&shark_k.window)
+                .map(|w| w.is::<gtk4::Editable>() || w.has_css_class("entry") || w.has_css_class("searchentry"))
+                .unwrap_or(false);
+
             match key {
+                // Return / Enter: Open selected item (when not editing text)
+                gdk::Key::Return | gdk::Key::KP_Enter if !is_editing && !alt => {
+                    let selected = shark_k.file_view.get_selected_entries();
+                    if let Some(first) = selected.into_iter().next() {
+                        shark_k.on_item_activated(first);
+                        return glib::Propagation::Stop;
+                    }
+                    glib::Propagation::Proceed
+                }
+                // Alt + Enter or Ctrl + I: Properties
+                gdk::Key::Return | gdk::Key::KP_Enter if alt => {
+                    shark_k.handle_properties();
+                    glib::Propagation::Stop
+                }
+                gdk::Key::i | gdk::Key::I if ctrl => {
+                    shark_k.handle_properties();
+                    glib::Propagation::Stop
+                }
+                // Ctrl + 1: Grid View
+                gdk::Key::_1 | gdk::Key::KP_1 if ctrl => {
+                    shark_k.toolbar.view_grid_btn.set_active(true);
+                    glib::Propagation::Stop
+                }
+                // Ctrl + 2: List View
+                gdk::Key::_2 | gdk::Key::KP_2 if ctrl => {
+                    shark_k.toolbar.view_list_btn.set_active(true);
+                    glib::Propagation::Stop
+                }
+                // Ctrl + K or Ctrl + P: Toggle command/search palette
+                gdk::Key::k | gdk::Key::K | gdk::Key::p | gdk::Key::P if ctrl => {
+                    let is_active = shark_k.toolbar.search_btn.is_active();
+                    shark_k.toolbar.search_btn.set_active(!is_active);
+                    glib::Propagation::Stop
+                }
                 // Ctrl + H: Toggle hidden
                 gdk::Key::h | gdk::Key::H if ctrl => {
                     let current = shark_k.config.borrow().show_hidden;
@@ -378,9 +422,20 @@ impl SharkWindow {
                     shark_k.toolbar.search_btn.set_active(!is_active);
                     glib::Propagation::Stop
                 }
-                // Ctrl + L: Focus location entry
+                // Ctrl + L or Alt + D: Focus location entry
                 gdk::Key::l | gdk::Key::L if ctrl => {
                     shark_k.toolbar.focus_location_entry();
+                    glib::Propagation::Stop
+                }
+                gdk::Key::d | gdk::Key::D if alt => {
+                    shark_k.toolbar.focus_location_entry();
+                    glib::Propagation::Stop
+                }
+                // Ctrl + D: Bookmark current folder
+                gdk::Key::d | gdk::Key::D if ctrl => {
+                    let cur = shark_k.history.borrow().current().to_path_buf();
+                    shark_k.config.borrow_mut().add_bookmark(&cur);
+                    shark_k.sidebar.populate_bookmarks();
                     glib::Propagation::Stop
                 }
                 // Ctrl + C: Copy
@@ -404,7 +459,7 @@ impl SharkWindow {
                     glib::Propagation::Stop
                 }
                 // Delete: Trash (or Shift+Delete: Permanent)
-                gdk::Key::Delete => {
+                gdk::Key::Delete if !is_editing => {
                     shark_k.handle_delete(shift);
                     glib::Propagation::Stop
                 }
@@ -413,19 +468,70 @@ impl SharkWindow {
                     shark_k.handle_rename();
                     glib::Propagation::Stop
                 }
-                // Alt + Left: Back
+                // Ctrl + Shift + S: Toggle Sort Order (Ascending / Descending)
+                gdk::Key::s | gdk::Key::S if ctrl && shift => {
+                    let cur_sort = shark_k.config.borrow().sort_by.clone();
+                    let cur_rev = shark_k.config.borrow().sort_reversed;
+                    shark_k.update_sort(&cur_sort, !cur_rev);
+                    glib::Propagation::Stop
+                }
+                // Zoom In: Ctrl + Plus / Ctrl + Equal / Ctrl + KP_Add
+                gdk::Key::plus | gdk::Key::equal | gdk::Key::KP_Add if ctrl => {
+                    shark_k.file_view.zoom_in();
+                    glib::Propagation::Stop
+                }
+                // Zoom Out: Ctrl + Minus / Ctrl + Underscore / Ctrl + KP_Subtract
+                gdk::Key::minus | gdk::Key::underscore | gdk::Key::KP_Subtract if ctrl => {
+                    shark_k.file_view.zoom_out();
+                    glib::Propagation::Stop
+                }
+                // Zoom Reset: Ctrl + 0
+                gdk::Key::_0 | gdk::Key::KP_0 if ctrl => {
+                    shark_k.file_view.zoom_reset();
+                    glib::Propagation::Stop
+                }
+                // Back: Alt + Left, BackSpace, Ctrl + [, or Multimedia Back
                 gdk::Key::Left if alt => {
                     shark_k.go_back();
                     glib::Propagation::Stop
                 }
-                // Alt + Right: Forward
+                gdk::Key::bracketleft if ctrl => {
+                    shark_k.go_back();
+                    glib::Propagation::Stop
+                }
+                gdk::Key::Back => {
+                    shark_k.go_back();
+                    glib::Propagation::Stop
+                }
+                gdk::Key::BackSpace if !is_editing && !shift => {
+                    shark_k.go_back();
+                    glib::Propagation::Stop
+                }
+                // Forward: Alt + Right, Shift + BackSpace, Ctrl + ], or Multimedia Forward
                 gdk::Key::Right if alt => {
                     shark_k.go_forward();
                     glib::Propagation::Stop
                 }
-                // Alt + Up: Parent
+                gdk::Key::bracketright if ctrl => {
+                    shark_k.go_forward();
+                    glib::Propagation::Stop
+                }
+                gdk::Key::Forward => {
+                    shark_k.go_forward();
+                    glib::Propagation::Stop
+                }
+                gdk::Key::BackSpace if !is_editing && shift => {
+                    shark_k.go_forward();
+                    glib::Propagation::Stop
+                }
+                // Alt + Up: Parent folder
                 gdk::Key::Up if alt => {
                     shark_k.go_up();
+                    glib::Propagation::Stop
+                }
+                // Alt + Home: Navigate to Home
+                gdk::Key::Home if alt => {
+                    shark_k.navigate_to(glib::home_dir());
                     glib::Propagation::Stop
                 }
                 // Ctrl + R or F5: Refresh
@@ -447,6 +553,16 @@ impl SharkWindow {
                     shark_k.handle_new_file();
                     glib::Propagation::Stop
                 }
+                // Ctrl + W or Ctrl + Q: Close window / Quit
+                gdk::Key::w | gdk::Key::W | gdk::Key::q | gdk::Key::Q if ctrl => {
+                    shark_k.window.close();
+                    glib::Propagation::Stop
+                }
+                // F1: About / Help
+                gdk::Key::F1 => {
+                    crate::gui::dialogs::show_about_dialog(&shark_k.window);
+                    glib::Propagation::Stop
+                }
                 // Escape: Cancel search or unselect
                 gdk::Key::Escape => {
                     if shark_k.toolbar.search_btn.is_active() {
@@ -461,6 +577,39 @@ impl SharkWindow {
         });
 
         self.window.add_controller(key_controller);
+
+        // Mouse Back/Forward navigation (Thumb buttons 8 and 9)
+        let mouse_nav = gtk4::GestureClick::builder()
+            .button(0)
+            .build();
+        let shark_mouse = self.clone();
+        mouse_nav.connect_pressed(move |gesture, _n_press, _x, _y| {
+            let button = gesture.current_button();
+            if button == 8 {
+                shark_mouse.go_back();
+            } else if button == 9 {
+                shark_mouse.go_forward();
+            }
+        });
+        self.window.add_controller(mouse_nav);
+
+        // Ctrl + Mouse Wheel Zoom
+        let scroll_controller = gtk4::EventControllerScroll::new(gtk4::EventControllerScrollFlags::VERTICAL);
+        let shark_scroll = self.clone();
+        scroll_controller.connect_scroll(move |controller, _dx, dy| {
+            let state = controller.current_event_state();
+            if state.contains(gdk::ModifierType::CONTROL_MASK) {
+                if dy < 0.0 {
+                    shark_scroll.file_view.zoom_in();
+                } else if dy > 0.0 {
+                    shark_scroll.file_view.zoom_out();
+                }
+                glib::Propagation::Stop
+            } else {
+                glib::Propagation::Proceed
+            }
+        });
+        self.window.add_controller(scroll_controller);
     }
 
     /// Navigate to a new directory.
@@ -982,10 +1131,41 @@ impl SharkWindow {
             let select_all_btn = make_item("Select All", "edit-select-all-symbolic");
             let reload_btn = make_item("Reload", "view-refresh-symbolic");
 
+            let cur_sort = self.config.borrow().sort_by.clone();
+            let cur_rev = self.config.borrow().sort_reversed;
+
+            let sort_name_btn = make_item(
+                "Sort by Name",
+                if cur_sort == "name" { "emblem-ok-symbolic" } else { "view-sort-ascending-symbolic" },
+            );
+            let sort_size_btn = make_item(
+                "Sort by Size",
+                if cur_sort == "size" { "emblem-ok-symbolic" } else { "view-sort-ascending-symbolic" },
+            );
+            let sort_date_btn = make_item(
+                "Sort by Date Modified",
+                if cur_sort == "modified" { "emblem-ok-symbolic" } else { "view-sort-ascending-symbolic" },
+            );
+            let sort_type_btn = make_item(
+                "Sort by File Type",
+                if cur_sort == "type" { "emblem-ok-symbolic" } else { "view-sort-ascending-symbolic" },
+            );
+            let sort_order_btn = make_item(
+                if cur_rev { "Order: Descending (Z → A)" } else { "Order: Ascending (A → Z)" },
+                if cur_rev { "view-sort-descending-symbolic" } else { "view-sort-ascending-symbolic" },
+            );
+
             menu_box.append(&new_folder_btn);
             menu_box.append(&new_file_btn);
             menu_box.append(&gtk4::Separator::new(gtk4::Orientation::Horizontal));
             menu_box.append(&paste_btn);
+            menu_box.append(&gtk4::Separator::new(gtk4::Orientation::Horizontal));
+            menu_box.append(&sort_name_btn);
+            menu_box.append(&sort_size_btn);
+            menu_box.append(&sort_date_btn);
+            menu_box.append(&sort_type_btn);
+            menu_box.append(&gtk4::Separator::new(gtk4::Orientation::Horizontal));
+            menu_box.append(&sort_order_btn);
             menu_box.append(&gtk4::Separator::new(gtk4::Orientation::Horizontal));
             menu_box.append(&select_all_btn);
             menu_box.append(&reload_btn);
@@ -1011,6 +1191,41 @@ impl SharkWindow {
                 shark_pst.handle_paste();
             });
 
+            let shark_sn = self.clone();
+            let pop_sn = popover.clone();
+            sort_name_btn.connect_clicked(move |_| {
+                pop_sn.popdown();
+                shark_sn.update_sort("name", cur_rev);
+            });
+
+            let shark_ss = self.clone();
+            let pop_ss = popover.clone();
+            sort_size_btn.connect_clicked(move |_| {
+                pop_ss.popdown();
+                shark_ss.update_sort("size", cur_rev);
+            });
+
+            let shark_sd = self.clone();
+            let pop_sd = popover.clone();
+            sort_date_btn.connect_clicked(move |_| {
+                pop_sd.popdown();
+                shark_sd.update_sort("modified", cur_rev);
+            });
+
+            let shark_st = self.clone();
+            let pop_st = popover.clone();
+            sort_type_btn.connect_clicked(move |_| {
+                pop_st.popdown();
+                shark_st.update_sort("type", cur_rev);
+            });
+
+            let shark_so = self.clone();
+            let pop_so = popover.clone();
+            sort_order_btn.connect_clicked(move |_| {
+                pop_so.popdown();
+                shark_so.update_sort(&cur_sort, !cur_rev);
+            });
+
             let shark_sa = self.clone();
             let pop_sa = popover.clone();
             select_all_btn.connect_clicked(move |_| {
@@ -1031,6 +1246,15 @@ impl SharkWindow {
         popover.popup();
 
         *self.active_popover.borrow_mut() = Some(popover);
+    }
+
+    /// Update sorting parameters, persisting to config and updating both the view and toolbar.
+    pub fn update_sort(self: &Rc<Self>, sort_by: &str, reversed: bool) {
+        self.config.borrow_mut().sort_by = sort_by.to_string();
+        self.config.borrow_mut().sort_reversed = reversed;
+        self.config.borrow().save();
+        self.file_view.set_sort(sort_by, reversed);
+        self.toolbar.set_sort_state(sort_by, reversed);
     }
 
     /// Apply solid or translucent glass styling dynamically to window and popups.
