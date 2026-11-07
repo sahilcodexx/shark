@@ -123,16 +123,16 @@ impl FileView {
 
             let card = gtk4::Box::builder()
                 .orientation(gtk4::Orientation::Vertical)
-                .spacing(4)
+                .spacing(2)
                 .halign(gtk4::Align::Center)
                 .valign(gtk4::Align::Start)
                 .css_classes(["file-grid-item"])
                 .build();
 
             let icon = gtk4::Image::builder()
-                .pixel_size(96)
+                .pixel_size(76)
                 .width_request(96)
-                .height_request(96)
+                .height_request(76)
                 .halign(gtk4::Align::Center)
                 .build();
 
@@ -141,8 +141,8 @@ impl FileView {
                 .justify(gtk4::Justification::Center)
                 .wrap(true)
                 .wrap_mode(gtk4::pango::WrapMode::WordChar)
-                .width_chars(18)
-                .max_width_chars(18)
+                .width_chars(13)
+                .max_width_chars(15)
                 .lines(2)
                 .ellipsize(gtk4::pango::EllipsizeMode::End)
                 .css_classes(["file-grid-label"])
@@ -151,15 +151,20 @@ impl FileView {
             card.append(&icon);
             card.append(&label);
             let detail = gtk4::Label::builder()
+                .halign(gtk4::Align::Center)
+                .justify(gtk4::Justification::Center)
                 .css_classes(["file-grid-detail"])
                 .build();
             card.append(&detail);
             item.set_child(Some(&card));
         });
 
-        // Decode once; every visible folder shares the same texture.
+        // Decode once; visible folders and documents share fast cached textures.
         let folder_texture = gtk4::gdk_pixbuf::Pixbuf::from_read(std::io::Cursor::new(
             include_bytes!("../../assets/icons/folder.svg").as_slice(),
+        )).ok().map(|pixbuf| gtk4::gdk::Texture::for_pixbuf(&pixbuf));
+        let doc_texture = gtk4::gdk_pixbuf::Pixbuf::from_read(std::io::Cursor::new(
+            include_bytes!("../../assets/icons/document.svg").as_slice(),
         )).ok().map(|pixbuf| gtk4::gdk::Texture::for_pixbuf(&pixbuf));
         grid_factory.connect_bind(move |_, list_item| {
             let item = list_item.downcast_ref::<gtk4::ListItem>().unwrap();
@@ -170,14 +175,39 @@ impl FileView {
             let label = icon.next_sibling().and_downcast::<gtk4::Label>().unwrap();
             let detail = card.last_child().and_downcast::<gtk4::Label>().unwrap();
 
-            if file_obj.is_directory() && !file_obj.with_entry(|e| e.is_symlink)
-                && let Some(texture) = &folder_texture {
+            if file_obj.is_directory() && !file_obj.with_entry(|e| e.is_symlink) {
+                if let Some(texture) = &folder_texture {
+                    icon.set_paintable(Some(texture));
+                } else {
+                    icon.set_icon_name(Some(&file_obj.icon_name()));
+                }
+            } else if file_obj.with_entry(|e| {
+                let ct = &e.content_type;
+                ct.starts_with("text/") || ct.contains("json") || ct.contains("toml")
+                    || ct.contains("xml") || ct.contains("markdown")
+                    || ct.ends_with("/lock") || ct == "application/octet-stream"
+            }) && let Some(texture) = &doc_texture {
                 icon.set_paintable(Some(texture));
             } else {
                 icon.set_icon_name(Some(&file_obj.icon_name()));
             }
+
             detail.set_text(&file_obj.with_entry(|entry| {
-                if entry.is_directory { "Folder".to_string() } else { entry.formatted_size() }
+                if entry.is_directory {
+                    if let Ok(count) = std::fs::read_dir(&entry.path).map(|r| r.count()) {
+                        if count == 0 {
+                            "Empty".to_string()
+                        } else if count == 1 {
+                            "1 item".to_string()
+                        } else {
+                            format!("{} items", count)
+                        }
+                    } else {
+                        "Folder".to_string()
+                    }
+                } else {
+                    entry.formatted_size()
+                }
             }));
             label.set_text(&file_obj.name());
             card.set_tooltip_text(Some(&file_obj.name()));

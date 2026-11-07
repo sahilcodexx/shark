@@ -44,9 +44,9 @@ impl Sidebar {
             .margin_bottom(12)
             .build();
 
-        // 1. Places Header & List
+        // 1. Favourites Header & List
         let places_header = gtk4::Label::builder()
-            .label("Places")
+            .label("Favourites")
             .halign(gtk4::Align::Start)
             .css_classes(["sidebar-section-header"])
             .build();
@@ -125,15 +125,15 @@ impl Sidebar {
 
         let box_w = gtk4::Box::builder()
             .orientation(gtk4::Orientation::Horizontal)
-            .spacing(12)
-            .margin_start(12)
-            .margin_end(12)
-            .margin_top(8)
-            .margin_bottom(8)
+            .spacing(10)
+            .margin_start(10)
+            .margin_end(10)
+            .margin_top(5)
+            .margin_bottom(5)
             .build();
 
         let icon = gtk4::Image::from_icon_name(icon_name);
-        icon.set_pixel_size(17);
+        icon.set_pixel_size(16);
         if !icon_class.is_empty() {
             icon.add_css_class(icon_class);
         }

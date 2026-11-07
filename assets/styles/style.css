@@ -1,122 +1,421 @@
-/* Opaque surfaces keep the file browser readable without compositor blur. */
+/* Shark File Manager - Modern, refined system styling */
 @define-color shark_bg @theme_base_color;
 @define-color shark_side @theme_bg_color;
 @define-color shark_top @theme_bg_color;
 @define-color shark_text @theme_fg_color;
-@define-color shark_muted alpha(@theme_fg_color, 0.65);
-@define-color shark_line alpha(@theme_fg_color, 0.12);
+@define-color shark_muted alpha(@theme_fg_color, 0.55);
+@define-color shark_line alpha(@theme_fg_color, 0.08);
 @define-color shark_accent @theme_selected_bg_color;
 
 window.background {
     background: @shark_bg;
     color: @shark_text;
-    font-size: 14px;
+    font-size: 13px;
 }
+
 headerbar.toolbar {
     background: @shark_top;
     color: @shark_text;
     border: none;
     border-bottom: 1px solid @shark_line;
     box-shadow: none;
-    padding: 4px 16px;
-    min-height: 40px;
+    padding: 2px 14px;
+    min-height: 38px;
 }
-.toolbar button {
-    background: transparent;
+headerbar.toolbar > windowhandle > box {
+    min-height: 38px;
+}
+
+.toolbar-brand {
     color: @shark_text;
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: -0.2px;
+}
+.toolbar-brand image {
+    color: @shark_accent;
+}
+
+/* Grouped navigation pill */
+.nav-pill {
+    background: alpha(@shark_text, 0.05);
+    border: 1px solid @shark_line;
+    border-radius: 8px;
+    padding: 1px;
+}
+.nav-pill button {
+    border: none;
+    background: transparent;
+    box-shadow: none;
+    outline: none;
+    border-radius: 6px;
+    min-width: 26px;
+    min-height: 24px;
+    padding: 3px 5px;
+    color: @shark_muted;
+}
+.nav-pill button:hover {
+    background: alpha(@shark_text, 0.07);
+    color: @shark_text;
+}
+.nav-pill button:disabled {
+    opacity: 0.25;
+}
+
+/* General toolbar buttons */
+.toolbar button, .toolbar menubutton > button {
+    background: transparent;
+    color: @shark_muted;
     border: 1px solid transparent;
     border-radius: 7px;
     box-shadow: none;
-    margin: 0;
+    outline: none;
+    margin: 0 1px;
     min-height: 26px;
     min-width: 26px;
-    padding: 4px;
+    padding: 3px;
 }
-.toolbar entry { min-height: 24px; padding: 4px 8px; margin: 0; }
-.toolbar menubutton { padding: 0; margin: 0; }
-.toolbar windowcontrols button image { min-height: 16px; min-width: 16px; }
-.toolbar button:hover { background: alpha(@shark_text, 0.08); }
-.toolbar button:disabled { opacity: 0.3; }
-.breadcrumb-container { padding: 2px 6px; }
-.toolbar .breadcrumb-button { padding: 4px 8px; font-weight: 500; }
-.toolbar .breadcrumb-active { color: @shark_text; font-weight: 700; }
-.breadcrumb-separator { color: @shark_muted; margin: 0 2px; }
-.view-switcher { background: transparent; padding: 2px; border: 1px solid @shark_line; border-radius: 8px; }
-.view-switcher button { min-width: 24px; min-height: 24px; padding: 4px; border-radius: 5px; }
-.view-switcher button:checked { background: alpha(@shark_accent, 0.18); color: @shark_text; }
-.sidebar { background: @shark_side; border-right: 1px solid @shark_line; }
-.toolbar-brand { color: @shark_text; font-size: 18px; font-weight: 700; }
-.toolbar-brand image { color: @shark_accent; }
-headerbar.toolbar > windowhandle > box { min-height: 40px; }
-.sidebar-section-header { color: @shark_muted; font-size: 12px; font-weight: 600; margin: 16px 12px 4px; }
-.sidebar-list { background: transparent; }
+.toolbar menubutton {
+    padding: 0;
+    margin: 0;
+}
+.toolbar button:hover, .toolbar menubutton > button:hover {
+    background: alpha(@shark_text, 0.06);
+    color: @shark_text;
+}
+.toolbar button:checked {
+    background: alpha(@shark_accent, 0.15);
+    color: @shark_accent;
+}
+.toolbar button:disabled {
+    opacity: 0.3;
+}
+.toolbar entry {
+    min-height: 26px;
+    padding: 3px 8px;
+    margin: 0;
+}
+.toolbar windowcontrols button image {
+    min-height: 16px;
+    min-width: 16px;
+}
+
+/* Breadcrumbs */
+.breadcrumb-container {
+    background: alpha(@shark_text, 0.04);
+    border: 1px solid @shark_line;
+    border-radius: 8px;
+    padding: 1px 4px;
+}
+.toolbar .breadcrumb-button {
+    border: none;
+    background: transparent;
+    box-shadow: none;
+    padding: 3px 6px;
+    font-size: 13px;
+    font-weight: 500;
+    border-radius: 6px;
+    color: @shark_muted;
+}
+.toolbar .breadcrumb-button:hover {
+    background: alpha(@shark_text, 0.06);
+    color: @shark_text;
+}
+.toolbar .breadcrumb-active {
+    color: @shark_text;
+    font-weight: 600;
+}
+.breadcrumb-separator {
+    color: alpha(@shark_text, 0.3);
+    font-size: 13px;
+    margin: 0 1px;
+}
+
+/* View switcher */
+.view-switcher {
+    background: alpha(@shark_text, 0.05);
+    border: 1px solid @shark_line;
+    border-radius: 8px;
+    padding: 2px;
+}
+.view-switcher button {
+    border: none;
+    background: transparent;
+    box-shadow: none;
+    outline: none;
+    border-radius: 6px;
+    min-width: 24px;
+    min-height: 22px;
+    padding: 3px 6px;
+    margin: 0;
+    color: @shark_muted;
+}
+.view-switcher button:hover {
+    color: @shark_text;
+}
+.view-switcher button:checked {
+    background: alpha(@shark_text, 0.12);
+    color: @shark_text;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.15);
+}
+
+/* Sidebar */
+.sidebar {
+    background: @shark_side;
+    border-right: 1px solid @shark_line;
+}
+.sidebar-section-header {
+    color: @shark_muted;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    margin: 14px 10px 4px;
+    opacity: 0.75;
+}
+.sidebar-list {
+    background: transparent;
+}
 .sidebar-list row {
     background: transparent;
     color: @shark_text;
     border: 1px solid transparent;
     border-radius: 8px;
-    margin: 2px 0;
+    margin: 1px 0;
+    padding: 0;
+    transition: background 100ms ease;
+}
+.sidebar-list row:hover {
+    background: alpha(@shark_text, 0.05);
+}
+.sidebar-list row:selected {
+    background: alpha(@shark_text, 0.08);
+    border-color: alpha(@shark_text, 0.12);
+    color: #ffffff;
+}
+.sidebar-list image {
+    color: @shark_muted;
+}
+.sidebar-list row:selected image {
+    color: @shark_accent;
+}
+
+paned > separator {
+    min-width: 1px;
+    background: @shark_line;
+}
+
+/* Main file views */
+gridview, listview {
+    background: @shark_bg;
+    color: @shark_text;
+}
+gridview {
+    padding: 10px 20px 24px;
+}
+gridview > child {
+    padding: 3px;
+    border: none;
+    outline: none;
+    background: transparent;
+    box-shadow: none;
+}
+gridview > child:hover,
+gridview > child:selected,
+gridview > child:focus,
+gridview:focus > child:focus {
+    background: transparent;
+    outline: none;
+    box-shadow: none;
+    border: none;
+}
+
+/* Grid card */
+.file-grid-item {
+    min-width: 110px;
+    padding: 8px 6px 8px;
+    border: 1px solid transparent;
+    border-radius: 12px;
+    transition: background 120ms ease, border-color 120ms ease;
+}
+gridview > child:hover .file-grid-item {
+    background: alpha(@shark_text, 0.05);
+}
+gridview > child:selected .file-grid-item {
+    background: alpha(@shark_accent, 0.16);
+    border-color: alpha(@shark_accent, 0.45);
+}
+
+.file-grid-label {
+    font-size: 13px;
+    font-weight: 500;
+    color: @shark_text;
+    margin-top: 4px;
+    margin-bottom: 1px;
+}
+.file-grid-detail {
+    font-size: 11px;
+    font-weight: 400;
+    color: @shark_muted;
+}
+gridview > child:selected .file-grid-detail {
+    color: alpha(@shark_text, 0.7);
+}
+
+/* List view */
+.file-list-row {
+    padding: 7px 16px;
+    border-radius: 8px;
+    margin: 1px 8px;
+    font-size: 13px;
+}
+listview > child {
+    outline: none;
+    box-shadow: none;
+    background: transparent;
     padding: 0;
 }
-.sidebar-list row:hover { background: alpha(@shark_text, 0.06); }
-.sidebar-list row:selected { background: alpha(@shark_accent, 0.13); border-color: alpha(@shark_accent, 0.35); color: @shark_text; }
-.sidebar-list image { color: @shark_muted; }
-.sidebar-list row:selected image { color: @shark_accent; }
-paned > separator { min-width: 1px; background: @shark_line; }
-gridview, listview { background: @shark_bg; color: @shark_text; }
-gridview { padding: 12px 24px 24px; }
-gridview > child { padding: 4px; border: none; background: transparent; }
-gridview > child:hover, gridview > child:selected { background: transparent; }
-.file-grid-item {
-    min-width: 144px;
-    padding: 8px;
-    border: 1px solid transparent;
-    border-radius: 8px;
+listview > child:hover .file-list-row {
+    background: alpha(@shark_text, 0.04);
 }
-gridview > child:hover .file-grid-item { background: alpha(@shark_text, 0.05); }
-gridview > child:selected .file-grid-item {
-    background: alpha(@shark_accent, 0.14);
-    border-color: alpha(@shark_accent, 0.5);
+listview > child:selected .file-list-row {
+    background: alpha(@shark_accent, 0.16);
+    color: @shark_text;
 }
-.file-grid-label { font-size: 14px; color: @shark_text; }
-.file-grid-detail { font-size: 12px; color: @shark_muted; }
-.file-list-row { padding: 10px 18px; }
-listview > row:selected { background: alpha(@shark_accent, 0.14); color: @shark_text; }
-.dim-label { color: @shark_muted; }
-.search-container, .progress-banner { background: @shark_top; border-bottom: 1px solid @shark_line; padding: 10px 16px; }
-.folder-title { background: @shark_bg; color: @shark_text; font-size: 22px; font-weight: 600; padding: 24px 32px 8px; }
-.status-bar { background: @shark_bg; color: @shark_muted; border-top: 1px solid @shark_line; padding: 8px 20px; font-size: 11px; }
-.empty-state-title { color: @shark_text; font-size: 18px; font-weight: 600; }
-.empty-state-subtitle { color: @shark_muted; }
-entry { background: @shark_bg; color: @shark_text; border: 1px solid @shark_line; border-radius: 7px; padding: 6px 10px; box-shadow: none; }
-entry:focus { border-color: @shark_accent; }
-.error-text { color: @error_color; }
-*:focus-visible { outline: 2px solid @shark_accent; outline-offset: -2px; }
 
-/* A focused search surface, using the same system palette as the browser. */
-window.search-palette {
+.dim-label {
+    color: @shark_muted;
+    font-size: 12px;
+}
+
+.folder-title {
+    background: transparent;
+    color: @shark_text;
+    font-size: 16px;
+    font-weight: 600;
+    padding: 10px 24px 2px;
+    letter-spacing: -0.2px;
+}
+
+.search-container, .progress-banner {
+    background: @shark_top;
+    border-bottom: 1px solid @shark_line;
+    padding: 8px 16px;
+}
+
+.status-bar {
+    background: @shark_bg;
+    color: @shark_muted;
+    border-top: 1px solid @shark_line;
+    padding: 6px 18px;
+    font-size: 11px;
+}
+
+.empty-state-title {
+    color: @shark_text;
+    font-size: 17px;
+    font-weight: 600;
+}
+.empty-state-subtitle {
+    color: @shark_muted;
+    font-size: 13px;
+}
+
+entry {
     background: @shark_bg;
     color: @shark_text;
     border: 1px solid @shark_line;
-    border-radius: 12px;
-}
-.palette-input { margin: 10px; }
-.palette-input searchentry {
-    background: alpha(@shark_text, 0.04);
-    color: @shark_text;
-    border: 1px solid @shark_line;
-    border-radius: 8px;
+    border-radius: 7px;
+    padding: 5px 10px;
     box-shadow: none;
-    padding: 10px;
+}
+entry:focus {
+    border-color: @shark_accent;
+}
+.error-text {
+    color: @error_color;
+}
+*:focus-visible {
+    outline: 2px solid @shark_accent;
+    outline-offset: -2px;
+}
+
+/* Search command palette */
+window.search-palette {
+    background: @shark_bg;
+    color: @shark_text;
+    border: 1px solid alpha(@shark_text, 0.14);
+    border-radius: 14px;
+    box-shadow: 0 16px 40px rgba(0,0,0,0.5);
+}
+.search-palette *:focus-visible,
+.search-palette searchentry,
+.search-palette searchentry:focus,
+.search-palette searchentry:focus-within,
+.search-palette searchentry text,
+.search-palette searchentry text:focus,
+.search-palette searchentry text:focus-visible,
+.search-palette entry,
+.search-palette entry:focus {
+    outline: none;
+    box-shadow: none;
+    border: none;
+    background: transparent;
+}
+.palette-input {
+    margin: 12px 14px 6px;
+    background: alpha(@shark_text, 0.05);
+    border: 1px solid alpha(@shark_text, 0.12);
+    border-radius: 10px;
+    padding: 3px 8px;
+}
+.palette-input:focus-within {
+    border-color: @shark_accent;
+}
+.palette-input searchentry {
+    background: transparent;
+    border: none;
+    padding: 4px 2px;
     min-height: 24px;
 }
-.palette-input searchentry:focus-within { border-color: @shark_accent; }
-.palette-scope { margin: 4px 18px 10px; font-size: 12px; color: @shark_muted; }
-.palette-results { padding: 4px 10px; }
-.palette-results > row { border-radius: 7px; margin: 2px 0; }
-.palette-results > row:selected { background: alpha(@shark_accent, 0.14); color: @shark_text; }
-.palette-result { padding: 10px; }
-.palette-result image { color: @shark_muted; }
-.palette-result-path { font-size: 12px; color: @shark_muted; }
-.palette-status { padding: 10px 18px; color: @shark_muted; font-size: 12px; }
-.palette-hint { border-top: 1px solid @shark_line; padding: 12px 18px; color: @shark_muted; font-size: 11px; }
+.palette-scope {
+    margin: 4px 18px 8px;
+    font-size: 11px;
+    color: @shark_muted;
+}
+.palette-results {
+    padding: 4px 8px;
+}
+.palette-results > row {
+    border-radius: 8px;
+    margin: 1px 0;
+    padding: 0;
+}
+.palette-results > row:hover {
+    background: alpha(@shark_text, 0.04);
+}
+.palette-results > row:selected {
+    background: alpha(@shark_accent, 0.16);
+    color: @shark_text;
+}
+.palette-result {
+    padding: 8px 10px;
+}
+.palette-result image {
+    color: @shark_muted;
+}
+.palette-result-path {
+    font-size: 11px;
+    color: @shark_muted;
+}
+.palette-status {
+    padding: 8px 16px;
+    color: @shark_muted;
+    font-size: 11px;
+}
+.palette-hint {
+    border-top: 1px solid @shark_line;
+    padding: 10px 16px;
+    color: @shark_muted;
+    font-size: 11px;
+}

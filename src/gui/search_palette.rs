@@ -83,7 +83,13 @@ impl SearchPalette {
             row.append(&labels);
             item.set_child(Some(&row));
         });
-        factory.connect_bind(|_, item| {
+        let folder_texture = gtk4::gdk_pixbuf::Pixbuf::from_read(std::io::Cursor::new(
+            include_bytes!("../../assets/icons/folder.svg").as_slice(),
+        )).ok().map(|pixbuf| gtk4::gdk::Texture::for_pixbuf(&pixbuf));
+        let doc_texture = gtk4::gdk_pixbuf::Pixbuf::from_read(std::io::Cursor::new(
+            include_bytes!("../../assets/icons/document.svg").as_slice(),
+        )).ok().map(|pixbuf| gtk4::gdk::Texture::for_pixbuf(&pixbuf));
+        factory.connect_bind(move |_, item| {
             let item = item.downcast_ref::<gtk4::ListItem>().unwrap();
             let file = item.item().and_downcast::<FileObject>().unwrap();
             let row = item.child().and_downcast::<gtk4::Box>().unwrap();
@@ -91,7 +97,20 @@ impl SearchPalette {
             let labels = row.last_child().and_downcast::<gtk4::Box>().unwrap();
             let name = labels.first_child().and_downcast::<gtk4::Label>().unwrap();
             let path = labels.last_child().and_downcast::<gtk4::Label>().unwrap();
-            icon.set_icon_name(Some(&file.icon_name()));
+
+            if file.is_directory() && let Some(texture) = &folder_texture {
+                icon.set_paintable(Some(texture));
+            } else if file.with_entry(|e| {
+                let ct = &e.content_type;
+                ct.starts_with("text/") || ct.contains("json") || ct.contains("toml")
+                    || ct.contains("xml") || ct.contains("markdown")
+                    || ct.contains("pdf") || ct == "application/octet-stream"
+            }) && let Some(texture) = &doc_texture {
+                icon.set_paintable(Some(texture));
+            } else {
+                icon.set_icon_name(Some(&file.icon_name()));
+            }
+
             name.set_text(&file.name());
             file.with_entry(|file| {
                 path.set_text(&file.path.parent().unwrap_or(&file.path).to_string_lossy());

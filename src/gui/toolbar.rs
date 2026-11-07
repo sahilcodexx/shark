@@ -47,18 +47,19 @@ impl Toolbar {
             .css_classes(["toolbar"])
             .build();
 
-        let brand = gtk4::Box::new(gtk4::Orientation::Horizontal, 12);
-        brand.set_width_request(208);
+        let brand = gtk4::Box::new(gtk4::Orientation::Horizontal, 10);
+        brand.set_width_request(200);
         brand.add_css_class("toolbar-brand");
         let brand_icon = gtk4::Image::from_icon_name("system-file-manager-symbolic");
-        brand_icon.set_pixel_size(22);
+        brand_icon.set_pixel_size(18);
         brand.append(&brand_icon);
         brand.append(&gtk4::Label::new(Some("Shark")));
         header_bar.pack_start(&brand);
 
         // --- Left Box (Nav buttons) ---
-        let left_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 3);
+        let left_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
         left_box.set_valign(gtk4::Align::Center);
+        left_box.add_css_class("nav-pill");
 
         let back_btn = gtk4::Button::from_icon_name("go-previous-symbolic");
         back_btn.set_tooltip_text(Some("Back (Alt+Left)"));
