@@ -23,6 +23,13 @@ pub struct Config {
     pub window_width: i32,
     /// Window default height
     pub window_height: i32,
+    /// Background opacity mode: "solid" (plain simple background) or "glass" (translucent acrylic/glass)
+    #[serde(default = "default_background_mode")]
+    pub background_mode: String,
+}
+
+fn default_background_mode() -> String {
+    "solid".to_string()
 }
 
 impl Default for Config {
@@ -48,6 +55,7 @@ impl Default for Config {
             bookmarks: default_bookmarks,
             window_width: 1024,
             window_height: 700,
+            background_mode: "solid".to_string(),
         }
     }
 }

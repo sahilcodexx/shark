@@ -38,6 +38,7 @@ pub struct Toolbar {
     on_bookmark_current: ActionCallback,
     on_new_folder: ActionCallback,
     on_about: ActionCallback,
+    on_background_mode_changed: ViewCallback,
 }
 
 impl Toolbar {
@@ -231,6 +232,23 @@ impl Toolbar {
         app_menu_box.set_margin_top(8);
         app_menu_box.set_margin_bottom(8);
 
+        let appearance_label = gtk4::Label::builder()
+            .label("Appearance")
+            .halign(gtk4::Align::Start)
+            .css_classes(["heading"])
+            .build();
+
+        let is_glass = config.borrow().background_mode == "glass";
+        let solid_check = gtk4::CheckButton::builder()
+            .label("Plain Solid Background")
+            .active(!is_glass)
+            .build();
+        let glass_check = gtk4::CheckButton::builder()
+            .label("Translucent Glass Effect")
+            .active(is_glass)
+            .group(&solid_check)
+            .build();
+
         let hidden_check = gtk4::CheckButton::builder()
             .label("Show Hidden Files (Ctrl+H)")
             .active(config.borrow().show_hidden)
@@ -252,6 +270,10 @@ impl Toolbar {
         refresh_btn.set_label("Reload (Ctrl+R)");
         app_menu_box.append(&up_btn);
         app_menu_box.append(&refresh_btn);
+        app_menu_box.append(&gtk4::Separator::new(gtk4::Orientation::Horizontal));
+        app_menu_box.append(&appearance_label);
+        app_menu_box.append(&solid_check);
+        app_menu_box.append(&glass_check);
         app_menu_box.append(&gtk4::Separator::new(gtk4::Orientation::Horizontal));
         app_menu_box.append(&hidden_check);
         app_menu_box.append(&gtk4::Separator::new(gtk4::Orientation::Horizontal));
@@ -278,6 +300,7 @@ impl Toolbar {
         let on_bookmark_current = Rc::new(RefCell::new(None));
         let on_new_folder = Rc::new(RefCell::new(None));
         let on_about = Rc::new(RefCell::new(None));
+        let on_background_mode_changed = Rc::new(RefCell::new(None));
 
         let folder_title = gtk4::Label::builder()
             .halign(gtk4::Align::Fill)
@@ -311,6 +334,7 @@ impl Toolbar {
             on_bookmark_current,
             on_new_folder,
             on_about,
+            on_background_mode_changed,
         };
 
         toolbar.setup_callbacks(
@@ -322,6 +346,8 @@ impl Toolbar {
             rev_check,
             sort_popover,
             hidden_check,
+            solid_check,
+            glass_check,
             bookmark_btn,
             about_btn,
             app_popover,
@@ -342,6 +368,8 @@ impl Toolbar {
         rev_check: gtk4::CheckButton,
         sort_popover: gtk4::Popover,
         hidden_check: gtk4::CheckButton,
+        solid_check: gtk4::CheckButton,
+        glass_check: gtk4::CheckButton,
         bookmark_btn: gtk4::Button,
         about_btn: gtk4::Button,
         app_popover: gtk4::Popover,
@@ -452,6 +480,31 @@ impl Toolbar {
             cfg_sh.borrow().save();
             if let Some(ref cb) = *on_sh.borrow() {
                 cb(show);
+            }
+        });
+
+        // Background style toggle (Solid vs Glass)
+        let on_bg_s = self.on_background_mode_changed.clone();
+        let cfg_s = config.clone();
+        solid_check.connect_toggled(move |c| {
+            if c.is_active() {
+                cfg_s.borrow_mut().background_mode = "solid".to_string();
+                cfg_s.borrow().save();
+                if let Some(ref cb) = *on_bg_s.borrow() {
+                    cb("solid".to_string());
+                }
+            }
+        });
+
+        let on_bg_g = self.on_background_mode_changed.clone();
+        let cfg_g = config.clone();
+        glass_check.connect_toggled(move |c| {
+            if c.is_active() {
+                cfg_g.borrow_mut().background_mode = "glass".to_string();
+                cfg_g.borrow().save();
+                if let Some(ref cb) = *on_bg_g.borrow() {
+                    cb("glass".to_string());
+                }
             }
         });
 
@@ -610,5 +663,10 @@ impl Toolbar {
     /// Connect about dialog callback.
     pub fn connect_about<F: Fn() + 'static>(&self, f: F) {
         *self.on_about.borrow_mut() = Some(Box::new(f));
+    }
+
+    /// Connect background mode (solid vs glass) change callback.
+    pub fn connect_background_mode_changed<F: Fn(String) + 'static>(&self, f: F) {
+        *self.on_background_mode_changed.borrow_mut() = Some(Box::new(f));
     }
 }

@@ -207,6 +207,7 @@ impl SharkWindow {
             active_popover,
         });
 
+        shark.apply_background_mode(&shark.config.borrow().background_mode);
         shark.setup_bindings();
         shark.setup_key_shortcuts();
 
@@ -330,6 +331,12 @@ impl SharkWindow {
         let shark_sel = self.clone();
         self.file_view.selection_model.connect_selection_changed(move |_, _, _| {
             shark_sel.update_status_bar();
+        });
+
+        // Background mode changes
+        let shark_bg = self.clone();
+        self.toolbar.connect_background_mode_changed(move |mode| {
+            shark_bg.apply_background_mode(&mode);
         });
 
         // Window size changed on close -> save geometry
@@ -1024,5 +1031,20 @@ impl SharkWindow {
         popover.popup();
 
         *self.active_popover.borrow_mut() = Some(popover);
+    }
+
+    /// Apply solid or translucent glass styling dynamically to window and popups.
+    pub fn apply_background_mode(&self, mode: &str) {
+        if mode == "glass" {
+            self.window.remove_css_class("solid-bg");
+            self.window.add_css_class("glass-bg");
+            self.search_palette.window.remove_css_class("solid-bg");
+            self.search_palette.window.add_css_class("glass-bg");
+        } else {
+            self.window.remove_css_class("glass-bg");
+            self.window.add_css_class("solid-bg");
+            self.search_palette.window.remove_css_class("glass-bg");
+            self.search_palette.window.add_css_class("solid-bg");
+        }
     }
 }

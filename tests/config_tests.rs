@@ -8,6 +8,7 @@ fn test_default_config() {
     assert!(!config.show_hidden);
     assert_eq!(config.sort_by, "name");
     assert!(!config.sort_reversed);
+    assert_eq!(config.background_mode, "solid");
     assert!(config.window_width >= 800);
     assert!(config.window_height >= 600);
 }
