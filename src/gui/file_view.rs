@@ -1,9 +1,14 @@
 //! File display area with virtualized Grid and List views, sorting, filtering and selection.
 
 use crate::models::{FileEntry, FileObject};
+use crate::utils::{is_previewable_media, load_media_thumbnail};
 use gtk4::prelude::*;
 use std::cell::RefCell;
+use std::collections::HashMap;
+use std::path::PathBuf;
 use std::rc::Rc;
+
+type SortRequestCallback = Rc<RefCell<Option<Box<dyn Fn(String, bool)>>>>;
 
 #[derive(Clone)]
 pub struct FileView {
@@ -19,8 +24,104 @@ pub struct FileView {
     search_query_state: Rc<RefCell<String>>,
     sort_by_state: Rc<RefCell<String>>,
     sort_reversed_state: Rc<RefCell<bool>>,
+    pub thumbnail_cache: Rc<RefCell<HashMap<PathBuf, Option<gtk4::gdk::Texture>>>>,
+    pub icon_size: Rc<RefCell<i32>>,
     grid_view: gtk4::GridView,
     list_view: gtk4::ListView,
+    header_name_label: gtk4::Label,
+    header_size_label: gtk4::Label,
+    header_type_label: gtk4::Label,
+    header_date_label: gtk4::Label,
+    on_sort_request: SortRequestCallback,
+}
+
+#[derive(Clone)]
+struct BuiltinIcons {
+    folder: Option<gtk4::gdk::Texture>,
+    doc: Option<gtk4::gdk::Texture>,
+    pdf: Option<gtk4::gdk::Texture>,
+    archive: Option<gtk4::gdk::Texture>,
+    code: Option<gtk4::gdk::Texture>,
+    audio: Option<gtk4::gdk::Texture>,
+    video: Option<gtk4::gdk::Texture>,
+    image: Option<gtk4::gdk::Texture>,
+}
+
+impl BuiltinIcons {
+    fn new() -> Self {
+        let load_svg = |bytes: &'static [u8]| {
+            gtk4::gdk_pixbuf::Pixbuf::from_read(std::io::Cursor::new(bytes))
+                .ok()
+                .map(|pixbuf| gtk4::gdk::Texture::for_pixbuf(&pixbuf))
+        };
+
+        Self {
+            folder: load_svg(include_bytes!("../../assets/icons/folder.svg")),
+            doc: load_svg(include_bytes!("../../assets/icons/document.svg")),
+            pdf: load_svg(include_bytes!("../../assets/icons/pdf.svg")),
+            archive: load_svg(include_bytes!("../../assets/icons/archive.svg")),
+            code: load_svg(include_bytes!("../../assets/icons/code.svg")),
+            audio: load_svg(include_bytes!("../../assets/icons/audio.svg")),
+            video: load_svg(include_bytes!("../../assets/icons/video.svg")),
+            image: load_svg(include_bytes!("../../assets/icons/image.svg")),
+        }
+    }
+
+    fn resolve(&self, content_type: &str, path: &std::path::Path, is_dir: bool) -> Option<gtk4::gdk::Texture> {
+        if is_dir {
+            return self.folder.clone();
+        }
+
+        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+
+        // 1. PDF
+        if content_type == "application/pdf" || ext == "pdf" {
+            return self.pdf.clone().or_else(|| self.doc.clone());
+        }
+
+        // 2. Archives / Compressed
+        if content_type.contains("archive") || content_type.contains("zip") || content_type.contains("tar")
+            || matches!(ext.as_str(), "zip" | "tar" | "gz" | "xz" | "bz2" | "7z" | "rar" | "zst" | "iso" | "deb" | "rpm")
+        {
+            return self.archive.clone().or_else(|| self.doc.clone());
+        }
+
+        // 3. Audio / Music
+        if content_type.starts_with("audio/") || matches!(ext.as_str(), "mp3" | "wav" | "flac" | "ogg" | "m4a" | "aac" | "opus" | "wma") {
+            return self.audio.clone().or_else(|| self.doc.clone());
+        }
+
+        // 4. Video (fallback when no thumbnail)
+        if content_type.starts_with("video/") || matches!(ext.as_str(), "mp4" | "mkv" | "webm" | "avi" | "mov" | "flv" | "wmv" | "m4v") {
+            return self.video.clone().or_else(|| self.doc.clone());
+        }
+
+        // 5. Image (fallback when no thumbnail)
+        if content_type.starts_with("image/") || matches!(ext.as_str(), "png" | "jpg" | "jpeg" | "webp" | "svg" | "gif" | "bmp" | "ico" | "avif") {
+            return self.image.clone().or_else(|| self.doc.clone());
+        }
+
+        // 6. Source code / config / markup
+        if content_type.starts_with("text/x-")
+            || content_type.contains("javascript")
+            || content_type.contains("json")
+            || content_type.contains("toml")
+            || content_type.contains("yaml")
+            || content_type.contains("xml")
+            || matches!(
+                ext.as_str(),
+                "rs" | "py" | "js" | "ts" | "jsx" | "tsx" | "c" | "cpp" | "h" | "hpp"
+                | "sh" | "bash" | "zsh" | "html" | "css" | "scss" | "json" | "toml"
+                | "yaml" | "yml" | "xml" | "sql" | "lua" | "go" | "java" | "kt" | "swift"
+                | "rb" | "php" | "lock"
+            )
+        {
+            return self.code.clone().or_else(|| self.doc.clone());
+        }
+
+        // 7. General documents, text, notes, logs, csv, data
+        self.doc.clone()
+    }
 }
 
 impl Default for FileView {
@@ -130,9 +231,9 @@ impl FileView {
                 .build();
 
             let icon = gtk4::Image::builder()
-                .pixel_size(76)
-                .width_request(96)
-                .height_request(76)
+                .pixel_size(86)
+                .width_request(104)
+                .height_request(86)
                 .halign(gtk4::Align::Center)
                 .build();
 
@@ -141,8 +242,8 @@ impl FileView {
                 .justify(gtk4::Justification::Center)
                 .wrap(true)
                 .wrap_mode(gtk4::pango::WrapMode::WordChar)
-                .width_chars(13)
-                .max_width_chars(15)
+                .width_chars(14)
+                .max_width_chars(16)
                 .lines(2)
                 .ellipsize(gtk4::pango::EllipsizeMode::End)
                 .css_classes(["file-grid-label"])
@@ -159,13 +260,17 @@ impl FileView {
             item.set_child(Some(&card));
         });
 
-        // Decode once; visible folders and documents share fast cached textures.
-        let folder_texture = gtk4::gdk_pixbuf::Pixbuf::from_read(std::io::Cursor::new(
-            include_bytes!("../../assets/icons/folder.svg").as_slice(),
-        )).ok().map(|pixbuf| gtk4::gdk::Texture::for_pixbuf(&pixbuf));
-        let doc_texture = gtk4::gdk_pixbuf::Pixbuf::from_read(std::io::Cursor::new(
-            include_bytes!("../../assets/icons/document.svg").as_slice(),
-        )).ok().map(|pixbuf| gtk4::gdk::Texture::for_pixbuf(&pixbuf));
+        let builtin_icons = BuiltinIcons::new();
+        let icons_grid = builtin_icons.clone();
+        let icons_list = builtin_icons;
+
+        let thumbnail_cache = Rc::new(RefCell::new(HashMap::<PathBuf, Option<gtk4::gdk::Texture>>::new()));
+        let thumb_cache_grid = thumbnail_cache.clone();
+        let thumb_cache_list = thumbnail_cache.clone();
+
+        let icon_size = Rc::new(RefCell::new(86));
+        let icon_size_grid = icon_size.clone();
+
         grid_factory.connect_bind(move |_, list_item| {
             let item = list_item.downcast_ref::<gtk4::ListItem>().unwrap();
             let file_obj = item.item().and_downcast::<FileObject>().unwrap();
@@ -175,21 +280,62 @@ impl FileView {
             let label = icon.next_sibling().and_downcast::<gtk4::Label>().unwrap();
             let detail = card.last_child().and_downcast::<gtk4::Label>().unwrap();
 
-            if file_obj.is_directory() && !file_obj.with_entry(|e| e.is_symlink) {
-                if let Some(texture) = &folder_texture {
+            let cur_size = *icon_size_grid.borrow();
+            icon.set_pixel_size(cur_size);
+            icon.set_width_request(cur_size + 18);
+            icon.set_height_request(cur_size);
+
+            icon.remove_css_class("file-grid-thumbnail");
+
+            if file_obj.is_directory() {
+                if let Some(ref texture) = icons_grid.folder {
                     icon.set_paintable(Some(texture));
                 } else {
                     icon.set_icon_name(Some(&file_obj.icon_name()));
                 }
-            } else if file_obj.with_entry(|e| {
-                let ct = &e.content_type;
-                ct.starts_with("text/") || ct.contains("json") || ct.contains("toml")
-                    || ct.contains("xml") || ct.contains("markdown")
-                    || ct.ends_with("/lock") || ct == "application/octet-stream"
-            }) && let Some(texture) = &doc_texture {
-                icon.set_paintable(Some(texture));
+            } else if file_obj.with_entry(|e| is_previewable_media(&e.content_type, &e.path)) {
+                let (path, content_type, size, icon_name) = file_obj.with_entry(|e| {
+                    (e.path.clone(), e.content_type.clone(), e.size, e.icon_name.clone())
+                });
+
+                let cached = thumb_cache_grid.borrow().get(&path).cloned();
+                match cached {
+                    Some(Some(ref texture)) => {
+                        icon.add_css_class("file-grid-thumbnail");
+                        icon.set_paintable(Some(texture));
+                    }
+                    Some(None) => {
+                        if let Some(texture) = icons_grid.resolve(&content_type, &path, false) {
+                            icon.set_paintable(Some(&texture));
+                        } else {
+                            icon.set_icon_name(Some(&icon_name));
+                        }
+                    }
+                    None => {
+                        let texture = load_media_thumbnail(&path, &content_type, size, 96, 84);
+                        if let Some(ref tex) = texture {
+                            icon.add_css_class("file-grid-thumbnail");
+                            icon.set_paintable(Some(tex));
+                        } else if let Some(fallback_tex) = icons_grid.resolve(&content_type, &path, false) {
+                            icon.set_paintable(Some(&fallback_tex));
+                        } else {
+                            icon.set_icon_name(Some(&icon_name));
+                        }
+                        if thumb_cache_grid.borrow().len() > 300 {
+                            thumb_cache_grid.borrow_mut().clear();
+                        }
+                        thumb_cache_grid.borrow_mut().insert(path, texture);
+                    }
+                }
             } else {
-                icon.set_icon_name(Some(&file_obj.icon_name()));
+                let (path, content_type, icon_name) = file_obj.with_entry(|e| {
+                    (e.path.clone(), e.content_type.clone(), e.icon_name.clone())
+                });
+                if let Some(texture) = icons_grid.resolve(&content_type, &path, false) {
+                    icon.set_paintable(Some(&texture));
+                } else {
+                    icon.set_icon_name(Some(&icon_name));
+                }
             }
 
             detail.set_text(&file_obj.with_entry(|entry| {
@@ -270,7 +416,7 @@ impl FileView {
             item.set_child(Some(&row));
         });
 
-        list_factory.connect_bind(|_, list_item| {
+        list_factory.connect_bind(move |_, list_item| {
             let item = list_item.downcast_ref::<gtk4::ListItem>().unwrap();
             let file_obj = item.item().and_downcast::<FileObject>().unwrap();
             let row = item.child().and_downcast::<gtk4::Box>().unwrap();
@@ -279,7 +425,39 @@ impl FileView {
 
             let mut child = row.first_child();
             if let Some(icon) = child.as_ref().and_then(|c| c.downcast_ref::<gtk4::Image>()) {
-                icon.set_icon_name(Some(&entry.icon_name));
+                if file_obj.is_directory() {
+                    if let Some(ref texture) = icons_list.folder {
+                        icon.set_paintable(Some(texture));
+                    } else {
+                        icon.set_icon_name(Some(&entry.icon_name));
+                    }
+                } else if is_previewable_media(&entry.content_type, &entry.path) {
+                    let cached = thumb_cache_list.borrow().get(&entry.path).cloned();
+                    if let Some(Some(ref texture)) = cached {
+                        icon.set_paintable(Some(texture));
+                    } else if cached.is_none() {
+                        let texture = load_media_thumbnail(&entry.path, &entry.content_type, entry.size, 32, 32);
+                        if let Some(ref tex) = texture {
+                            icon.set_paintable(Some(tex));
+                        } else if let Some(fallback_tex) = icons_list.resolve(&entry.content_type, &entry.path, false) {
+                            icon.set_paintable(Some(&fallback_tex));
+                        } else {
+                            icon.set_icon_name(Some(&entry.icon_name));
+                        }
+                        if thumb_cache_list.borrow().len() > 300 {
+                            thumb_cache_list.borrow_mut().clear();
+                        }
+                        thumb_cache_list.borrow_mut().insert(entry.path.clone(), texture);
+                    } else if let Some(fallback_tex) = icons_list.resolve(&entry.content_type, &entry.path, false) {
+                        icon.set_paintable(Some(&fallback_tex));
+                    } else {
+                        icon.set_icon_name(Some(&entry.icon_name));
+                    }
+                } else if let Some(texture) = icons_list.resolve(&entry.content_type, &entry.path, false) {
+                    icon.set_paintable(Some(&texture));
+                } else {
+                    icon.set_icon_name(Some(&entry.icon_name));
+                }
             }
 
             child = child.and_then(|c| c.next_sibling());
@@ -318,12 +496,135 @@ impl FileView {
             .hscrollbar_policy(gtk4::PolicyType::Automatic)
             .child(&list_view)
             .build();
+        // Column headers for List view
+        let header_name_label = gtk4::Label::builder()
+            .label("Name ▲")
+            .halign(gtk4::Align::Start)
+            .hexpand(true)
+            .css_classes(["file-list-header-label"])
+            .build();
+        let header_name_btn = gtk4::Button::builder()
+            .child(&header_name_label)
+            .halign(gtk4::Align::Fill)
+            .hexpand(true)
+            .css_classes(["flat", "file-list-header-btn"])
+            .build();
+
+        let header_size_label = gtk4::Label::builder()
+            .label("Size")
+            .halign(gtk4::Align::End)
+            .width_chars(10)
+            .css_classes(["file-list-header-label"])
+            .build();
+        let header_size_btn = gtk4::Button::builder()
+            .child(&header_size_label)
+            .halign(gtk4::Align::End)
+            .css_classes(["flat", "file-list-header-btn"])
+            .build();
+
+        let header_type_label = gtk4::Label::builder()
+            .label("Type")
+            .halign(gtk4::Align::Start)
+            .width_chars(18)
+            .css_classes(["file-list-header-label"])
+            .build();
+        let header_type_btn = gtk4::Button::builder()
+            .child(&header_type_label)
+            .halign(gtk4::Align::Start)
+            .css_classes(["flat", "file-list-header-btn"])
+            .build();
+
+        let header_date_label = gtk4::Label::builder()
+            .label("Modified")
+            .halign(gtk4::Align::End)
+            .width_chars(16)
+            .css_classes(["file-list-header-label"])
+            .build();
+        let header_date_btn = gtk4::Button::builder()
+            .child(&header_date_label)
+            .halign(gtk4::Align::End)
+            .css_classes(["flat", "file-list-header-btn"])
+            .build();
+
+        let icon_spacer = gtk4::Box::builder()
+            .width_request(18)
+            .build();
+
+        let list_header = gtk4::Box::builder()
+            .orientation(gtk4::Orientation::Horizontal)
+            .spacing(12)
+            .css_classes(["file-list-header"])
+            .build();
+        list_header.append(&icon_spacer);
+        list_header.append(&header_name_btn);
+        list_header.append(&header_size_btn);
+        list_header.append(&header_type_btn);
+        list_header.append(&header_date_btn);
+
+        let on_sort_request: SortRequestCallback = Rc::new(RefCell::new(None));
+
+        let sb_h = sort_by_state.clone();
+        let sr_h = sort_reversed_state.clone();
+        let osr_name = on_sort_request.clone();
+        header_name_btn.connect_clicked(move |_| {
+            let cur_col = sb_h.borrow().clone();
+            let cur_rev = *sr_h.borrow();
+            let new_rev = if cur_col == "name" { !cur_rev } else { false };
+            if let Some(ref cb) = *osr_name.borrow() {
+                cb("name".to_string(), new_rev);
+            }
+        });
+
+        let sb_h2 = sort_by_state.clone();
+        let sr_h2 = sort_reversed_state.clone();
+        let osr_size = on_sort_request.clone();
+        header_size_btn.connect_clicked(move |_| {
+            let cur_col = sb_h2.borrow().clone();
+            let cur_rev = *sr_h2.borrow();
+            let new_rev = if cur_col == "size" { !cur_rev } else { false };
+            if let Some(ref cb) = *osr_size.borrow() {
+                cb("size".to_string(), new_rev);
+            }
+        });
+
+        let sb_h3 = sort_by_state.clone();
+        let sr_h3 = sort_reversed_state.clone();
+        let osr_type = on_sort_request.clone();
+        header_type_btn.connect_clicked(move |_| {
+            let cur_col = sb_h3.borrow().clone();
+            let cur_rev = *sr_h3.borrow();
+            let new_rev = if cur_col == "type" { !cur_rev } else { false };
+            if let Some(ref cb) = *osr_type.borrow() {
+                cb("type".to_string(), new_rev);
+            }
+        });
+
+        let sb_h4 = sort_by_state.clone();
+        let sr_h4 = sort_reversed_state.clone();
+        let osr_date = on_sort_request.clone();
+        header_date_btn.connect_clicked(move |_| {
+            let cur_col = sb_h4.borrow().clone();
+            let cur_rev = *sr_h4.borrow();
+            let new_rev = if cur_col == "modified" { !cur_rev } else { false };
+            if let Some(ref cb) = *osr_date.borrow() {
+                cb("modified".to_string(), new_rev);
+            }
+        });
+
+        let list_container = gtk4::Box::builder()
+            .orientation(gtk4::Orientation::Vertical)
+            .hexpand(true)
+            .vexpand(true)
+            .build();
+        list_container.append(&list_header);
+        list_container.append(&list_scroll);
+
         let stack = gtk4::Stack::builder()
             .hexpand(true)
             .vexpand(true)
             .build();
         stack.add_named(&grid_scroll, Some("grid"));
-        stack.add_named(&list_scroll, Some("list"));
+        stack.add_named(&list_container, Some("list"));
 
         Self {
             container: stack.clone(),
@@ -338,14 +639,74 @@ impl FileView {
             search_query_state,
             sort_by_state,
             sort_reversed_state,
+            thumbnail_cache,
+            icon_size,
             grid_view,
             list_view,
+            header_name_label,
+            header_size_label,
+            header_type_label,
+            header_date_label,
+            on_sort_request,
         }
+    }
+
+    fn apply_zoom_to_visible(&self, size: i32) {
+        fn walk(widget: &gtk4::Widget, size: i32) {
+            if widget.has_css_class("file-grid-item") {
+                if let Some(card) = widget.downcast_ref::<gtk4::Box>() {
+                    if let Some(icon) = card.first_child().and_then(|c| c.downcast::<gtk4::Image>().ok()) {
+                        icon.set_pixel_size(size);
+                        icon.set_width_request(size + 18);
+                        icon.set_height_request(size);
+                    }
+                }
+                return;
+            }
+            let mut child = widget.first_child();
+            while let Some(current) = child {
+                walk(&current, size);
+                child = current.next_sibling();
+            }
+        }
+        walk(self.grid_view.upcast_ref(), size);
+
+        let count = self.list_store.n_items();
+        if count > 0 {
+            self.list_store.items_changed(0, count, count);
+        }
+    }
+
+    /// Zoom in grid icons
+    pub fn zoom_in(&self) {
+        let cur = *self.icon_size.borrow();
+        if cur < 160 {
+            let new_size = (cur + 16).min(160);
+            *self.icon_size.borrow_mut() = new_size;
+            self.apply_zoom_to_visible(new_size);
+        }
+    }
+
+    /// Zoom out grid icons
+    pub fn zoom_out(&self) {
+        let cur = *self.icon_size.borrow();
+        if cur > 48 {
+            let new_size = (cur - 16).max(48);
+            *self.icon_size.borrow_mut() = new_size;
+            self.apply_zoom_to_visible(new_size);
+        }
+    }
+
+    /// Reset zoom to default 86px
+    pub fn zoom_reset(&self) {
+        *self.icon_size.borrow_mut() = 86;
+        self.apply_zoom_to_visible(86);
     }
 
     /// Clear all items from view.
     pub fn clear(&self) {
         self.list_store.remove_all();
+        self.thumbnail_cache.borrow_mut().clear();
     }
 
     /// Append a batch of FileEntry items.
@@ -370,7 +731,22 @@ impl FileView {
     pub fn set_sort(&self, sort_by: &str, reversed: bool) {
         *self.sort_by_state.borrow_mut() = sort_by.to_string();
         *self.sort_reversed_state.borrow_mut() = reversed;
+        self.update_header_indicators(sort_by, reversed);
         self.custom_sorter.changed(gtk4::SorterChange::Different);
+    }
+
+    /// Update column header arrow indicators in list view.
+    pub fn update_header_indicators(&self, sort_by: &str, reversed: bool) {
+        let arrow = if reversed { " ▼" } else { " ▲" };
+        self.header_name_label.set_text(&format!("Name{}", if sort_by == "name" { arrow } else { "" }));
+        self.header_size_label.set_text(&format!("Size{}", if sort_by == "size" { arrow } else { "" }));
+        self.header_type_label.set_text(&format!("Type{}", if sort_by == "type" { arrow } else { "" }));
+        self.header_date_label.set_text(&format!("Modified{}", if sort_by == "modified" { arrow } else { "" }));
+    }
+
+    /// Connect sort request triggered from list view headers.
+    pub fn connect_sort_request<F: Fn(String, bool) + 'static>(&self, f: F) {
+        *self.on_sort_request.borrow_mut() = Some(Box::new(f));
     }
 
     /// Switch view mode ("grid" or "list").
