@@ -24,7 +24,13 @@ pub struct Toolbar {
     pub new_folder_btn: gtk4::Button,
     pub view_grid_btn: gtk4::ToggleButton,
     pub view_list_btn: gtk4::ToggleButton,
-    _sort_btn: gtk4::MenuButton,
+    pub sort_btn: gtk4::MenuButton,
+    pub sort_radio_name: gtk4::CheckButton,
+    pub sort_radio_size: gtk4::CheckButton,
+    pub sort_radio_date: gtk4::CheckButton,
+    pub sort_radio_type: gtk4::CheckButton,
+    pub sort_radio_asc: gtk4::CheckButton,
+    pub sort_radio_desc: gtk4::CheckButton,
     _menu_btn: gtk4::MenuButton,
     breadcrumb_box: gtk4::Box,
     location_entry: gtk4::Entry,
@@ -48,11 +54,11 @@ impl Toolbar {
             .css_classes(["toolbar"])
             .build();
 
-        let brand = gtk4::Box::new(gtk4::Orientation::Horizontal, 10);
-        brand.set_width_request(200);
+        let brand = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
+        brand.set_width_request(100);
         brand.add_css_class("toolbar-brand");
         let brand_icon = gtk4::Image::from_icon_name("system-file-manager-symbolic");
-        brand_icon.set_pixel_size(18);
+        brand_icon.set_pixel_size(16);
         brand.append(&brand_icon);
         brand.append(&gtk4::Label::new(Some("Shark")));
         header_bar.pack_start(&brand);
@@ -168,9 +174,12 @@ impl Toolbar {
         view_box.append(&view_grid_btn);
         view_box.append(&view_list_btn);
 
+        let cur_sort = config.borrow().sort_by.clone();
+        let cur_rev = config.borrow().sort_reversed;
+
         // Sort menu button
         let sort_btn = gtk4::MenuButton::builder()
-            .icon_name("view-sort-ascending-symbolic")
+            .icon_name(if cur_rev { "view-sort-descending-symbolic" } else { "view-sort-ascending-symbolic" })
             .tooltip_text("Sort Options")
             .build();
 
@@ -188,33 +197,51 @@ impl Toolbar {
             .build();
         sort_menu_box.append(&sort_label);
 
-        let make_sort_item = |name: &'static str, id: &'static str| {
-            let btn = gtk4::Button::builder()
-                .label(name)
-                .halign(gtk4::Align::Fill)
-                .css_classes(["flat"])
-                .build();
-            btn.set_widget_name(id);
-            btn
-        };
+        let sort_radio_name = gtk4::CheckButton::builder()
+            .label("Name")
+            .active(cur_sort == "name")
+            .build();
+        let sort_radio_size = gtk4::CheckButton::builder()
+            .label("Size")
+            .active(cur_sort == "size")
+            .group(&sort_radio_name)
+            .build();
+        let sort_radio_date = gtk4::CheckButton::builder()
+            .label("Modified Date")
+            .active(cur_sort == "modified")
+            .group(&sort_radio_name)
+            .build();
+        let sort_radio_type = gtk4::CheckButton::builder()
+            .label("File Type")
+            .active(cur_sort == "type")
+            .group(&sort_radio_name)
+            .build();
 
-        let btn_name = make_sort_item("Name", "name");
-        let btn_size = make_sort_item("Size", "size");
-        let btn_date = make_sort_item("Modified Date", "modified");
-        let btn_type = make_sort_item("File Type", "type");
-
-        let rev_check = gtk4::CheckButton::builder()
-            .label("Descending Order")
-            .active(config.borrow().sort_reversed)
+        let order_label = gtk4::Label::builder()
+            .label("Order")
+            .halign(gtk4::Align::Start)
+            .css_classes(["heading"])
             .margin_top(6)
             .build();
 
-        sort_menu_box.append(&btn_name);
-        sort_menu_box.append(&btn_size);
-        sort_menu_box.append(&btn_date);
-        sort_menu_box.append(&btn_type);
+        let sort_radio_asc = gtk4::CheckButton::builder()
+            .label("Ascending (A → Z, Old → New)")
+            .active(!cur_rev)
+            .build();
+        let sort_radio_desc = gtk4::CheckButton::builder()
+            .label("Descending (Z → A, New → Old)")
+            .active(cur_rev)
+            .group(&sort_radio_asc)
+            .build();
+
+        sort_menu_box.append(&sort_radio_name);
+        sort_menu_box.append(&sort_radio_size);
+        sort_menu_box.append(&sort_radio_date);
+        sort_menu_box.append(&sort_radio_type);
         sort_menu_box.append(&gtk4::Separator::new(gtk4::Orientation::Horizontal));
-        sort_menu_box.append(&rev_check);
+        sort_menu_box.append(&order_label);
+        sort_menu_box.append(&sort_radio_asc);
+        sort_menu_box.append(&sort_radio_desc);
 
         sort_popover.set_child(Some(&sort_menu_box));
         sort_btn.set_popover(Some(&sort_popover));
@@ -320,7 +347,13 @@ impl Toolbar {
             new_folder_btn,
             view_grid_btn,
             view_list_btn,
-            _sort_btn: sort_btn,
+            sort_btn,
+            sort_radio_name,
+            sort_radio_size,
+            sort_radio_date,
+            sort_radio_type,
+            sort_radio_asc,
+            sort_radio_desc,
             _menu_btn: menu_btn,
             breadcrumb_box,
             location_entry,
@@ -339,11 +372,6 @@ impl Toolbar {
 
         toolbar.setup_callbacks(
             config,
-            btn_name,
-            btn_size,
-            btn_date,
-            btn_type,
-            rev_check,
             sort_popover,
             hidden_check,
             solid_check,
@@ -361,11 +389,6 @@ impl Toolbar {
     fn setup_callbacks(
         &self,
         config: Rc<RefCell<Config>>,
-        btn_name: gtk4::Button,
-        btn_size: gtk4::Button,
-        btn_date: gtk4::Button,
-        btn_type: gtk4::Button,
-        rev_check: gtk4::CheckButton,
         sort_popover: gtk4::Popover,
         hidden_check: gtk4::CheckButton,
         solid_check: gtk4::CheckButton,
@@ -438,36 +461,63 @@ impl Toolbar {
             }
         });
 
-        // Sort items
-        let sort_buttons = [btn_name, btn_size, btn_date, btn_type];
-        for btn in sort_buttons {
-            let on_sc = self.on_sort_changed.clone();
-            let pop = sort_popover.clone();
-            let rev_c = rev_check.clone();
-            let cfg = config.clone();
+        // Sort column radio buttons
+        let radio_items = [
+            (&self.sort_radio_name, "name"),
+            (&self.sort_radio_size, "size"),
+            (&self.sort_radio_date, "modified"),
+            (&self.sort_radio_type, "type"),
+        ];
 
-            btn.connect_clicked(move |b| {
-                pop.popdown();
-                let id_str = b.widget_name().to_string();
-                let reversed = rev_c.is_active();
-                cfg.borrow_mut().sort_by = id_str.clone();
-                cfg.borrow_mut().sort_reversed = reversed;
-                cfg.borrow().save();
-                if let Some(ref cb) = *on_sc.borrow() {
-                    cb(id_str, reversed);
+        for (radio, id_str) in radio_items {
+            let on_sc = self.on_sort_changed.clone();
+            let cfg = config.clone();
+            let r_desc = self.sort_radio_desc.clone();
+            let id = id_str.to_string();
+            let pop = sort_popover.clone();
+
+            radio.connect_toggled(move |r| {
+                if r.is_active() {
+                    pop.popdown();
+                    let reversed = r_desc.is_active();
+                    cfg.borrow_mut().sort_by = id.clone();
+                    cfg.borrow_mut().sort_reversed = reversed;
+                    cfg.borrow().save();
+                    if let Some(ref cb) = *on_sc.borrow() {
+                        cb(id.clone(), reversed);
+                    }
                 }
             });
         }
 
-        let on_sc_rev = self.on_sort_changed.clone();
-        let cfg_rev = config.clone();
-        rev_check.connect_toggled(move |c| {
-            let reversed = c.is_active();
-            let current_sort = cfg_rev.borrow().sort_by.clone();
-            cfg_rev.borrow_mut().sort_reversed = reversed;
-            cfg_rev.borrow().save();
-            if let Some(ref cb) = *on_sc_rev.borrow() {
-                cb(current_sort, reversed);
+        // Ascending / Descending order
+        let on_sc_asc = self.on_sort_changed.clone();
+        let cfg_asc = config.clone();
+        let s_btn_asc = self.sort_btn.clone();
+        self.sort_radio_asc.connect_toggled(move |r| {
+            if r.is_active() {
+                s_btn_asc.set_icon_name("view-sort-ascending-symbolic");
+                let cur = cfg_asc.borrow().sort_by.clone();
+                cfg_asc.borrow_mut().sort_reversed = false;
+                cfg_asc.borrow().save();
+                if let Some(ref cb) = *on_sc_asc.borrow() {
+                    cb(cur, false);
+                }
+            }
+        });
+
+        let on_sc_desc = self.on_sort_changed.clone();
+        let cfg_desc = config.clone();
+        let s_btn_desc = self.sort_btn.clone();
+        self.sort_radio_desc.connect_toggled(move |r| {
+            if r.is_active() {
+                s_btn_desc.set_icon_name("view-sort-descending-symbolic");
+                let cur = cfg_desc.borrow().sort_by.clone();
+                cfg_desc.borrow_mut().sort_reversed = true;
+                cfg_desc.borrow().save();
+                if let Some(ref cb) = *on_sc_desc.borrow() {
+                    cb(cur, true);
+                }
             }
         });
 
@@ -668,5 +718,22 @@ impl Toolbar {
     /// Connect background mode (solid vs glass) change callback.
     pub fn connect_background_mode_changed<F: Fn(String) + 'static>(&self, f: F) {
         *self.on_background_mode_changed.borrow_mut() = Some(Box::new(f));
+    }
+
+    /// Update the toolbar's sort UI (icon and radio checks) to match the current sort settings.
+    pub fn set_sort_state(&self, sort_by: &str, reversed: bool) {
+        if reversed {
+            self.sort_btn.set_icon_name("view-sort-descending-symbolic");
+            self.sort_radio_desc.set_active(true);
+        } else {
+            self.sort_btn.set_icon_name("view-sort-ascending-symbolic");
+            self.sort_radio_asc.set_active(true);
+        }
+        match sort_by {
+            "size" => self.sort_radio_size.set_active(true),
+            "modified" => self.sort_radio_date.set_active(true),
+            "type" => self.sort_radio_type.set_active(true),
+            _ => self.sort_radio_name.set_active(true),
+        }
     }
 }
