@@ -131,7 +131,7 @@ impl FileEntry {
     }
 
     /// Guess MIME content type from file extension.
-    fn guess_content_type(ext: &str) -> String {
+    pub fn guess_content_type(ext: &str) -> String {
         match ext.to_lowercase().as_str() {
             "png" => "image/png",
             "jpg" | "jpeg" => "image/jpeg",
