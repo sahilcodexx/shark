@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="96" height="84" viewBox="0 0 96 84">
+  <defs>
+    <linearGradient id="imgDocGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#f0fdf4"/>
+    </linearGradient>
+    <linearGradient id="imgFoldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#34d399"/>
+      <stop offset="100%" stop-color="#059669"/>
+    </linearGradient>
+    <linearGradient id="imgBadgeGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#10b981"/>
+      <stop offset="100%" stop-color="#047857"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Ground shadow -->
+  <ellipse cx="48" cy="79" rx="32" ry="4" fill="#0b132b" opacity="0.25"/>
+
+  <!-- Document body -->
+  <path d="M 19 14
+           C 19 10.5 21.5 8 25 8
+           L 61 8
+           L 77 24
+           L 77 69
+           C 77 72.5 74.5 75 71 75
+           L 25 75
+           C 21.5 75 19 72.5 19 69
+           Z"
+        fill="url(#imgDocGrad)"
+        stroke="#dcfce7"
+        stroke-width="1"/>
+
+  <!-- Folded top-right corner -->
+  <path d="M 61 8 L 61 20 C 61 22.5 62.5 24 65 24 L 77 24 Z"
+        fill="url(#imgFoldGrad)"/>
+
+  <!-- Top preview lines -->
+  <rect x="28" y="24" width="28" height="3" rx="1.5" fill="#34d399" opacity="0.5"/>
+  <rect x="28" y="31" width="38" height="3" rx="1.5" fill="#cbd5e1" opacity="0.4"/>
+
+  <!-- Photo Picture Badge -->
+  <rect x="25" y="42" width="46" height="26" rx="4.5" fill="url(#imgBadgeGrad)"/>
+  
+  <!-- Sun -->
+  <circle cx="58" cy="49" r="3.5" fill="#fef08a"/>
+
+  <!-- Mountains -->
+  <path d="M 28 64 L 39 52 L 48 60 L 55 54 L 68 64 Z" fill="#ffffff" opacity="0.9"/>
+  <path d="M 44 64 L 52 56 L 68 64 Z" fill="#a7f3d0" opacity="0.6"/>
+</svg>

@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="96" height="84" viewBox="0 0 96 84">
+  <defs>
+    <linearGradient id="archDocGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#edf2f7"/>
+    </linearGradient>
+    <linearGradient id="archFoldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fbbf24"/>
+      <stop offset="100%" stop-color="#d97706"/>
+    </linearGradient>
+    <linearGradient id="zipSliderGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#f59e0b"/>
+      <stop offset="100%" stop-color="#b45309"/>
+    </linearGradient>
+    <linearGradient id="zipBandGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#475569"/>
+      <stop offset="100%" stop-color="#334155"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Ground shadow -->
+  <ellipse cx="48" cy="79" rx="32" ry="4" fill="#0b132b" opacity="0.25"/>
+
+  <!-- Document body -->
+  <path d="M 19 14
+           C 19 10.5 21.5 8 25 8
+           L 61 8
+           L 77 24
+           L 77 69
+           C 77 72.5 74.5 75 71 75
+           L 25 75
+           C 21.5 75 19 72.5 19 69
+           Z"
+        fill="url(#archDocGrad)"
+        stroke="#e2e8f0"
+        stroke-width="1"/>
+
+  <!-- Folded top-right corner -->
+  <path d="M 61 8 L 61 20 C 61 22.5 62.5 24 65 24 L 77 24 Z"
+        fill="url(#archFoldGrad)"/>
+
+  <!-- Central Zipper Band -->
+  <rect x="42" y="8" width="12" height="67" fill="url(#zipBandGrad)" opacity="0.15"/>
+  
+  <!-- Zipper teeth -->
+  <rect x="44" y="14" width="4" height="2.5" rx="0.5" fill="#64748b"/>
+  <rect x="48" y="18" width="4" height="2.5" rx="0.5" fill="#64748b"/>
+  <rect x="44" y="22" width="4" height="2.5" rx="0.5" fill="#64748b"/>
+  <rect x="48" y="26" width="4" height="2.5" rx="0.5" fill="#64748b"/>
+  <rect x="44" y="30" width="4" height="2.5" rx="0.5" fill="#64748b"/>
+  <rect x="48" y="34" width="4" height="2.5" rx="0.5" fill="#64748b"/>
+  <rect x="44" y="38" width="4" height="2.5" rx="0.5" fill="#64748b"/>
+  <rect x="48" y="42" width="4" height="2.5" rx="0.5" fill="#64748b"/>
+
+  <!-- Zipper Slider -->
+  <rect x="41" y="46" width="14" height="15" rx="2.5" fill="url(#zipSliderGrad)"/>
+  <!-- Zipper pull tab -->
+  <path d="M 45 61 L 51 61 L 50 71 C 50 72 49 73 48 73 C 47 73 46 72 46 71 Z" fill="#d97706"/>
+  <circle cx="48" cy="68" r="1.5" fill="#ffffff" opacity="0.8"/>
+
+  <!-- Archive Badge / Label on the side -->
+  <rect x="23" y="28" width="15" height="2.5" rx="1.25" fill="#94a3b8" opacity="0.5"/>
+  <rect x="23" y="34" width="15" height="2.5" rx="1.25" fill="#94a3b8" opacity="0.35"/>
+  <rect x="58" y="28" width="15" height="2.5" rx="1.25" fill="#94a3b8" opacity="0.5"/>
+  <rect x="58" y="34" width="15" height="2.5" rx="1.25" fill="#94a3b8" opacity="0.35"/>
+</svg>

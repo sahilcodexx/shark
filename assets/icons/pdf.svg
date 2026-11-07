@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="96" height="84" viewBox="0 0 96 84">
+  <defs>
+    <linearGradient id="pdfDocGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#f8fafc"/>
+    </linearGradient>
+    <linearGradient id="pdfFoldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#f87171"/>
+      <stop offset="100%" stop-color="#dc2626"/>
+    </linearGradient>
+    <linearGradient id="pdfBadgeGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#ef4444"/>
+      <stop offset="100%" stop-color="#b91c1c"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Ground shadow -->
+  <ellipse cx="48" cy="79" rx="32" ry="4" fill="#0b132b" opacity="0.25"/>
+
+  <!-- Document body: width 58, height 67 (from y=8 to y=75) -->
+  <path d="M 19 14
+           C 19 10.5 21.5 8 25 8
+           L 61 8
+           L 77 24
+           L 77 69
+           C 77 72.5 74.5 75 71 75
+           L 25 75
+           C 21.5 75 19 72.5 19 69
+           Z"
+        fill="url(#pdfDocGrad)"
+        stroke="#fee2e2"
+        stroke-width="1"/>
+
+  <!-- Folded top-right corner -->
+  <path d="M 61 8 L 61 20 C 61 22.5 62.5 24 65 24 L 77 24 Z"
+        fill="url(#pdfFoldGrad)"/>
+
+  <!-- Document hint lines -->
+  <rect x="28" y="22" width="28" height="3" rx="1.5" fill="#f87171" opacity="0.5"/>
+  <rect x="28" y="30" width="38" height="3" rx="1.5" fill="#cbd5e1" opacity="0.5"/>
+  <rect x="28" y="37" width="34" height="3" rx="1.5" fill="#cbd5e1" opacity="0.4"/>
+
+  <!-- PDF Badge -->
+  <rect x="24" y="47" width="48" height="21" rx="4.5" fill="url(#pdfBadgeGrad)"/>
+  <rect x="24.5" y="47.5" width="47" height="10" rx="3.5" fill="#ffffff" opacity="0.15"/>
+
+  <!-- PDF Text -->
+  <text x="48" y="62"
+        font-family="system-ui, -apple-system, Cantarell, Ubuntu, sans-serif"
+        font-weight="800"
+        font-size="12"
+        fill="#ffffff"
+        text-anchor="middle"
+        letter-spacing="1">PDF</text>
+</svg>
