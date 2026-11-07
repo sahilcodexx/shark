@@ -1,8 +1,8 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="96" height="76" viewBox="0 0 96 76">
+<svg xmlns="http://www.w3.org/2000/svg" width="96" height="84" viewBox="0 0 96 84">
   <defs>
     <linearGradient id="docGrad" x1="0%" y1="0%" x2="0%" y2="100%">
       <stop offset="0%" stop-color="#ffffff"/>
-      <stop offset="100%" stop-color="#e6eaf2"/>
+      <stop offset="100%" stop-color="#e8ecf4"/>
     </linearGradient>
     <linearGradient id="foldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
       <stop offset="0%" stop-color="#cbd5e1"/>
@@ -11,27 +11,27 @@
   </defs>
 
   <!-- Ground shadow -->
-  <ellipse cx="48" cy="71" rx="26" ry="3.5" fill="#0b132b" opacity="0.2"/>
+  <ellipse cx="48" cy="79" rx="32" ry="4" fill="#0b132b" opacity="0.25"/>
 
-  <!-- Document body: 50 width x 62 height -->
-  <path d="M 27 10
-           C 27 6.5 29.5 4 33 4
-           L 55 4
-           L 69 18
-           L 69 64
-           C 69 67.5 66.5 70 63 70
-           L 33 70
-           C 29.5 70 27 67.5 27 64
+  <!-- Document body: width 58, height 67 (from y=8 to y=75) -->
+  <path d="M 19 14
+           C 19 10.5 21.5 8 25 8
+           L 61 8
+           L 77 24
+           L 77 69
+           C 77 72.5 74.5 75 71 75
+           L 25 75
+           C 21.5 75 19 72.5 19 69
            Z"
         fill="url(#docGrad)"/>
 
-  <!-- Folded corner -->
-  <path d="M 55 4 L 55 14 C 55 16.5 56.5 18 59 18 L 69 18 Z"
+  <!-- Folded top-right corner -->
+  <path d="M 61 8 L 61 20 C 61 22.5 62.5 24 65 24 L 77 24 Z"
         fill="url(#foldGrad)"/>
 
-  <!-- Subtle line indicators -->
-  <rect x="35" y="27" width="26" height="3" rx="1.5" fill="#94a3b8" opacity="0.45"/>
-  <rect x="35" y="36" width="26" height="3" rx="1.5" fill="#94a3b8" opacity="0.35"/>
-  <rect x="35" y="45" width="20" height="3" rx="1.5" fill="#94a3b8" opacity="0.35"/>
-  <rect x="35" y="54" width="14" height="3" rx="1.5" fill="#94a3b8" opacity="0.25"/>
+  <!-- Document text lines -->
+  <rect x="29" y="34" width="38" height="3.5" rx="1.75" fill="#94a3b8" opacity="0.45"/>
+  <rect x="29" y="43" width="38" height="3.5" rx="1.75" fill="#94a3b8" opacity="0.35"/>
+  <rect x="29" y="52" width="28" height="3.5" rx="1.75" fill="#94a3b8" opacity="0.35"/>
+  <rect x="29" y="61" width="20" height="3.5" rx="1.75" fill="#94a3b8" opacity="0.25"/>
 </svg>
