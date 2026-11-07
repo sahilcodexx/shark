@@ -53,8 +53,8 @@ window.background.glass-bg,
     background-color: alpha(@shark_bg, 0.82);
 }
 window.search-palette.glass-bg {
-    background-color: alpha(@shark_bg, 0.96);
-    color: @shark_text;
+    background-color: #1a1b1f;
+    color: #f0f1f4;
 }
 
 headerbar.toolbar {
@@ -63,16 +63,16 @@ headerbar.toolbar {
     border: none;
     border-bottom: 1px solid @shark_line;
     box-shadow: none;
-    padding: 2px 14px;
-    min-height: 38px;
+    padding: 0 10px;
+    min-height: 32px;
 }
 headerbar.toolbar > windowhandle > box {
-    min-height: 38px;
+    min-height: 32px;
 }
 
 .toolbar-brand {
     color: @shark_text;
-    font-size: 14px;
+    font-size: 13px;
     font-weight: 700;
     letter-spacing: -0.2px;
 }
@@ -84,7 +84,7 @@ headerbar.toolbar > windowhandle > box {
 .nav-pill {
     background: alpha(@shark_text, 0.05);
     border: 1px solid @shark_line;
-    border-radius: 8px;
+    border-radius: 6px;
     padding: 1px;
 }
 .nav-pill button {
@@ -92,10 +92,10 @@ headerbar.toolbar > windowhandle > box {
     background: transparent;
     box-shadow: none;
     outline: none;
-    border-radius: 6px;
-    min-width: 26px;
-    min-height: 24px;
-    padding: 3px 5px;
+    border-radius: 5px;
+    min-width: 24px;
+    min-height: 22px;
+    padding: 2px 4px;
     color: @shark_muted;
 }
 .nav-pill button:hover {
@@ -111,13 +111,13 @@ headerbar.toolbar > windowhandle > box {
     background: transparent;
     color: @shark_muted;
     border: 1px solid transparent;
-    border-radius: 7px;
+    border-radius: 6px;
     box-shadow: none;
     outline: none;
     margin: 0 1px;
-    min-height: 26px;
-    min-width: 26px;
-    padding: 3px;
+    min-height: 24px;
+    min-width: 24px;
+    padding: 2px;
 }
 .toolbar menubutton {
     padding: 0;
@@ -135,30 +135,30 @@ headerbar.toolbar > windowhandle > box {
     opacity: 0.3;
 }
 .toolbar entry {
-    min-height: 26px;
-    padding: 3px 8px;
+    min-height: 24px;
+    padding: 2px 6px;
     margin: 0;
 }
 .toolbar windowcontrols button image {
-    min-height: 16px;
-    min-width: 16px;
+    min-height: 14px;
+    min-width: 14px;
 }
 
 /* Breadcrumbs */
 .breadcrumb-container {
     background: alpha(@shark_text, 0.04);
     border: 1px solid @shark_line;
-    border-radius: 8px;
-    padding: 1px 4px;
+    border-radius: 6px;
+    padding: 0 3px;
 }
 .toolbar .breadcrumb-button {
     border: none;
     background: transparent;
     box-shadow: none;
-    padding: 3px 6px;
-    font-size: 13px;
+    padding: 2px 5px;
+    font-size: 12px;
     font-weight: 500;
-    border-radius: 6px;
+    border-radius: 5px;
     color: @shark_muted;
 }
 .toolbar .breadcrumb-button:hover {
@@ -171,7 +171,7 @@ headerbar.toolbar > windowhandle > box {
 }
 .breadcrumb-separator {
     color: alpha(@shark_text, 0.3);
-    font-size: 13px;
+    font-size: 12px;
     margin: 0 1px;
 }
 
@@ -179,18 +179,18 @@ headerbar.toolbar > windowhandle > box {
 .view-switcher {
     background: alpha(@shark_text, 0.05);
     border: 1px solid @shark_line;
-    border-radius: 8px;
-    padding: 2px;
+    border-radius: 6px;
+    padding: 1px;
 }
 .view-switcher button {
     border: none;
     background: transparent;
     box-shadow: none;
     outline: none;
-    border-radius: 6px;
+    border-radius: 5px;
     min-width: 24px;
     min-height: 22px;
-    padding: 3px 6px;
+    padding: 2px 4px;
     margin: 0;
     color: @shark_muted;
 }
@@ -276,8 +276,8 @@ gridview:focus > child:focus {
 
 /* Grid card */
 .file-grid-item {
-    min-width: 110px;
-    padding: 8px 6px 8px;
+    min-width: 80px;
+    padding: 10px 8px 10px;
     border: 1px solid transparent;
     border-radius: 12px;
     transition: background 120ms ease, border-color 120ms ease;
@@ -288,6 +288,11 @@ gridview > child:hover .file-grid-item {
 gridview > child:selected .file-grid-item {
     background: alpha(@shark_accent, 0.16);
     border-color: alpha(@shark_accent, 0.45);
+}
+
+.file-grid-thumbnail {
+    border-radius: 8px;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
 }
 
 .file-grid-label {
@@ -307,6 +312,33 @@ gridview > child:selected .file-grid-detail {
 }
 
 /* List view */
+.file-list-header {
+    padding: 3px 16px;
+    margin: 2px 8px 4px 8px;
+    border-bottom: 1px solid alpha(@shark_border, 0.4);
+}
+.file-list-header-btn {
+    padding: 3px 6px;
+    border-radius: 6px;
+    min-height: 0;
+    min-width: 0;
+    background: transparent;
+    border: none;
+    box-shadow: none;
+}
+.file-list-header-btn:hover {
+    background: alpha(@shark_text, 0.06);
+}
+.file-list-header-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: @shark_muted;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+.file-list-header-btn:hover .file-list-header-label {
+    color: @shark_text;
+}
 .file-list-row {
     padding: 7px 16px;
     border-radius: 8px;
@@ -335,9 +367,9 @@ listview > child:selected .file-list-row {
 .folder-title {
     background: transparent;
     color: @shark_text;
-    font-size: 16px;
+    font-size: 14px;
     font-weight: 600;
-    padding: 10px 24px 2px;
+    padding: 4px 18px 2px;
     letter-spacing: -0.2px;
 }
 
@@ -386,80 +418,139 @@ entry:focus {
 
 /* Search command palette */
 window.search-palette {
-    background: @shark_bg;
+    background-color: transparent;
+    border-radius: 16px;
+    box-shadow: 0 24px 64px rgba(0, 0, 0, 0.85);
+}
+.palette-container {
+    background-color: #1a1b1f;
+    color: #f0f1f4;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 16px;
+    box-shadow: 0 24px 64px rgba(0, 0, 0, 0.85);
+}
+.solid-bg .palette-container,
+window.search-palette.solid-bg .palette-container {
+    background-color: @shark_bg;
     color: @shark_text;
-    border: 1px solid alpha(@shark_text, 0.14);
-    border-radius: 14px;
-    box-shadow: 0 16px 40px rgba(0,0,0,0.5);
+    border: 1px solid alpha(@shark_text, 0.16);
 }
-.search-palette *:focus-visible,
-.search-palette searchentry,
-.search-palette searchentry:focus,
-.search-palette searchentry:focus-within,
-.search-palette searchentry text,
-.search-palette searchentry text:focus,
-.search-palette searchentry text:focus-visible,
-.search-palette entry,
-.search-palette entry:focus {
-    outline: none;
+.glass-bg .palette-container,
+window.search-palette.glass-bg .palette-container {
+    background-color: #1a1b1f;
+    color: #f0f1f4;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+}
+.palette-header {
+    padding: 10px 14px;
+    background: transparent;
+}
+.palette-search-icon {
+    color: alpha(@shark_text, 0.55);
+    margin-right: 4px;
+}
+.palette-entry,
+.palette-header searchentry,
+.palette-header searchentry text,
+.palette-header searchentry text:focus,
+.palette-header searchentry text:focus-visible,
+.palette-header entry,
+.palette-header entry:focus {
+    background: transparent;
+    border: none;
     box-shadow: none;
-    border: none;
-    background: transparent;
+    outline: none;
+    color: @shark_text;
+    font-size: 14px;
+    padding: 0;
+    margin: 0;
 }
-.palette-input {
-    margin: 12px 14px 6px;
-    background: alpha(@shark_text, 0.05);
-    border: 1px solid alpha(@shark_text, 0.12);
-    border-radius: 10px;
-    padding: 3px 8px;
+.palette-key-badge {
+    font-size: 11px;
+    font-weight: 500;
+    color: alpha(@shark_text, 0.45);
+    background: alpha(@shark_text, 0.08);
+    border: 1px solid alpha(@shark_text, 0.1);
+    border-radius: 5px;
+    padding: 2px 6px;
+    margin-right: 4px;
 }
-.palette-input:focus-within {
-    border-color: @shark_accent;
-}
-.palette-input searchentry {
-    background: transparent;
-    border: none;
-    padding: 4px 2px;
+.palette-close-btn {
+    border-radius: 6px;
+    padding: 4px;
+    color: alpha(@shark_text, 0.5);
     min-height: 24px;
+    min-width: 24px;
+}
+.palette-close-btn:hover {
+    color: @shark_text;
+    background: alpha(@shark_text, 0.08);
+}
+.palette-divider {
+    background: alpha(@shark_text, 0.08);
+    min-height: 1px;
 }
 .palette-scope {
-    margin: 4px 18px 8px;
     font-size: 11px;
-    color: @shark_muted;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: alpha(@shark_text, 0.45);
+    padding: 8px 18px 4px;
 }
 .palette-results {
     padding: 4px 8px;
 }
 .palette-results > row {
     border-radius: 8px;
-    margin: 1px 0;
+    margin: 2px 0;
     padding: 0;
+    background: transparent;
+    border: 1px solid transparent;
 }
 .palette-results > row:hover {
-    background: alpha(@shark_text, 0.04);
+    background: alpha(@shark_text, 0.05);
 }
 .palette-results > row:selected {
-    background: alpha(@shark_accent, 0.16);
-    color: @shark_text;
+    background: alpha(@shark_text, 0.09);
+    border-color: alpha(@shark_text, 0.12);
+    color: #ffffff;
 }
 .palette-result {
-    padding: 8px 10px;
+    padding: 8px 12px;
 }
-.palette-result image {
-    color: @shark_muted;
+.palette-result-name {
+    font-size: 13px;
+    font-weight: 500;
+    color: @shark_text;
 }
 .palette-result-path {
     font-size: 11px;
-    color: @shark_muted;
+    color: alpha(@shark_text, 0.45);
+}
+.palette-action-badge {
+    font-size: 11px;
+    font-weight: 500;
+    color: alpha(@shark_text, 0.4);
+    background: alpha(@shark_text, 0.06);
+    border-radius: 4px;
+    padding: 2px 6px;
+    opacity: 0;
+}
+.palette-results > row:selected .palette-action-badge {
+    opacity: 1;
+    color: @shark_text;
+    background: alpha(@shark_text, 0.12);
+}
+.palette-footer {
+    padding: 8px 18px;
+    background: alpha(@shark_text, 0.02);
 }
 .palette-status {
-    padding: 8px 16px;
-    color: @shark_muted;
     font-size: 11px;
+    color: alpha(@shark_text, 0.5);
 }
 .palette-hint {
-    border-top: 1px solid @shark_line;
-    padding: 10px 16px;
-    color: @shark_muted;
     font-size: 11px;
+    color: alpha(@shark_text, 0.45);
 }
