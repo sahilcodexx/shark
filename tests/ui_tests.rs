@@ -52,6 +52,28 @@ fn ui_layout_and_selection() {
         .downcast::<gtk4::GridView>()
         .unwrap();
     assert_eq!(grid.min_columns(), 1);
+
+    let list_cont = view
+        .stack
+        .child_by_name("list")
+        .unwrap()
+        .downcast::<gtk4::Box>()
+        .unwrap();
+    let list_scroll = list_cont
+        .last_child()
+        .unwrap()
+        .downcast::<gtk4::ScrolledWindow>()
+        .unwrap();
+    assert!(list_scroll.property::<bool>("vexpand"), "list view scroll container must vexpand to fill height");
+    assert!(list_scroll.property::<bool>("hexpand"), "list view scroll container must hexpand to fill width");
+
+    // Verify zoom controls
+    let initial_zoom = *view.icon_size.borrow();
+    view.zoom_in();
+    assert_eq!(*view.icon_size.borrow(), initial_zoom + 16);
+    view.zoom_out();
+    assert_eq!(*view.icon_size.borrow(), initial_zoom);
+
     let entries = std::fs::read_dir(env!("CARGO_MANIFEST_DIR"))
         .unwrap()
         .take(10)
