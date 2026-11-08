@@ -7,6 +7,7 @@ use std::time::SystemTime;
 #[derive(Debug, Clone)]
 pub struct FileEntry {
     pub name: String,
+    pub name_lower: String,
     pub path: PathBuf,
     pub is_directory: bool,
     pub is_symlink: bool,
@@ -55,6 +56,7 @@ impl FileEntry {
             }
         });
 
+        let name_lower = name.to_lowercase();
         let icon_name = Self::determine_icon(&content_type, is_directory, is_symlink, &name);
 
         let permissions = info.attribute_uint32(gio::FILE_ATTRIBUTE_UNIX_MODE);
@@ -63,6 +65,7 @@ impl FileEntry {
 
         Self {
             name,
+            name_lower,
             path,
             is_directory,
             is_symlink,
@@ -76,6 +79,68 @@ impl FileEntry {
             owner,
             group,
         }
+    }
+
+    /// Create a FileEntry directly from a native DirEntry using cached kernel d_type.
+    pub fn from_dir_entry(entry: &std::fs::DirEntry) -> std::io::Result<Self> {
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().to_string();
+        let is_hidden = name.starts_with('.');
+        let name_lower = name.to_lowercase();
+
+        let file_type = entry.file_type()?;
+        let is_symlink = file_type.is_symlink();
+        let is_directory = if is_symlink {
+            entry.metadata().map(|m| m.is_dir()).unwrap_or(false)
+        } else {
+            file_type.is_dir()
+        };
+
+        let (size, modified, created, permissions) = if let Ok(meta) = entry.metadata() {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::MetadataExt;
+                let sz = if is_directory { 0 } else { meta.len() };
+                let mod_time = meta.modified().ok();
+                let cr_time = meta.created().ok();
+                (sz, mod_time, cr_time, meta.mode())
+            }
+            #[cfg(not(unix))]
+            {
+                let sz = if is_directory { 0 } else { meta.len() };
+                let mod_time = meta.modified().ok();
+                let cr_time = meta.created().ok();
+                (sz, mod_time, cr_time, 0o644)
+            }
+        } else {
+            (0, None, None, 0o644)
+        };
+
+        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+        let content_type = if is_directory {
+            "inode/directory".to_string()
+        } else {
+            Self::guess_content_type(ext)
+        };
+
+        let icon_name = Self::determine_icon(&content_type, is_directory, is_symlink, &name);
+
+        Ok(Self {
+            name,
+            name_lower,
+            path,
+            is_directory,
+            is_symlink,
+            is_hidden,
+            size,
+            modified,
+            created,
+            content_type,
+            icon_name,
+            permissions,
+            owner: String::new(),
+            group: String::new(),
+        })
     }
 
     /// Create a FileEntry from standard std::fs metadata.
@@ -92,6 +157,7 @@ impl FileEntry {
             .unwrap_or_else(|| "/".to_string());
 
         let is_hidden = name.starts_with('.');
+        let name_lower = name.to_lowercase();
         let size = if is_directory { 0 } else { meta.len() };
         let modified = meta.modified().ok();
         let created = meta.created().ok();
@@ -115,6 +181,7 @@ impl FileEntry {
 
         Ok(Self {
             name,
+            name_lower,
             path,
             is_directory,
             is_symlink,

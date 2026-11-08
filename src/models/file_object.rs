@@ -51,6 +51,11 @@ impl FileObject {
         self.with_entry(|e| e.name.clone())
     }
 
+    /// Precomputed lowercase name for fast zero-allocation sorting and filtering.
+    pub fn name_lower(&self) -> String {
+        self.with_entry(|e| e.name_lower.clone())
+    }
+
     /// File path.
     pub fn path(&self) -> PathBuf {
         self.with_entry(|e| e.path.clone())

@@ -58,6 +58,7 @@ fn test_sorting_entries() {
     let mut entries = vec![
         FileEntry {
             name: "zeta.txt".to_string(),
+            name_lower: "zeta.txt".to_string(),
             path: std::path::PathBuf::from("/zeta.txt"),
             is_directory: false,
             is_symlink: false,
@@ -73,6 +74,7 @@ fn test_sorting_entries() {
         },
         FileEntry {
             name: "alpha.png".to_string(),
+            name_lower: "alpha.png".to_string(),
             path: std::path::PathBuf::from("/alpha.png"),
             is_directory: false,
             is_symlink: false,
@@ -88,6 +90,7 @@ fn test_sorting_entries() {
         },
         FileEntry {
             name: "Folder B".to_string(),
+            name_lower: "folder b".to_string(),
             path: std::path::PathBuf::from("/Folder B"),
             is_directory: true,
             is_symlink: false,
