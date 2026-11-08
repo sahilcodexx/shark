@@ -562,15 +562,22 @@ impl FileView {
             .model(&selection_model)
             .factory(&list_factory)
             .enable_rubberband(true)
+            .hexpand(true)
+            .vexpand(true)
             .build();
 
         // Scrollable views must directly own their adjustments for virtualization.
         let grid_scroll = gtk4::ScrolledWindow::builder()
             .hscrollbar_policy(gtk4::PolicyType::Never)
+            .hexpand(true)
+            .vexpand(true)
             .child(&grid_view)
             .build();
         let list_scroll = gtk4::ScrolledWindow::builder()
-            .hscrollbar_policy(gtk4::PolicyType::Automatic)
+            .hscrollbar_policy(gtk4::PolicyType::Never)
+            .vscrollbar_policy(gtk4::PolicyType::Automatic)
+            .hexpand(true)
+            .vexpand(true)
             .child(&list_view)
             .build();
         // Column headers for List view
@@ -749,11 +756,7 @@ impl FileView {
             }
         }
         walk(self.grid_view.upcast_ref(), size);
-
-        let count = self.list_store.n_items();
-        if count > 0 {
-            self.list_store.items_changed(0, count, count);
-        }
+        self.grid_view.queue_resize();
     }
 
     /// Zoom in grid icons
