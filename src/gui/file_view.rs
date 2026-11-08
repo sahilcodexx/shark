@@ -1,14 +1,29 @@
 //! File display area with virtualized Grid and List views, sorting, filtering and selection.
 
 use crate::models::{FileEntry, FileObject};
-use crate::utils::{is_previewable_media, load_media_thumbnail};
+use crate::utils::{
+    generate_thumbnail_file, is_previewable_media, load_fast_cached_thumbnail,
+};
 use gtk4::prelude::*;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
+    mpsc::{Sender, channel},
+};
+use std::time::Duration;
 
 type SortRequestCallback = Rc<RefCell<Option<Box<dyn Fn(String, bool)>>>>;
+
+struct ThumbnailRequest {
+    path: PathBuf,
+    content_type: String,
+    size: u64,
+    generation: u64,
+}
 
 #[derive(Clone)]
 pub struct FileView {
@@ -33,6 +48,9 @@ pub struct FileView {
     header_type_label: gtk4::Label,
     header_date_label: gtk4::Label,
     on_sort_request: SortRequestCallback,
+    #[allow(dead_code)]
+    thumb_request_tx: Sender<ThumbnailRequest>,
+    thumb_generation: Arc<AtomicU64>,
 }
 
 #[derive(Clone)]
@@ -143,15 +161,14 @@ impl FileView {
         let custom_filter = gtk4::CustomFilter::new(move |obj| {
             let file_obj = obj.downcast_ref::<FileObject>().unwrap();
             let show_hidden = *sh_clone.borrow();
-            let query = sq_clone.borrow().clone();
+            let query_borrow = sq_clone.borrow();
 
             if !show_hidden && file_obj.is_hidden() {
                 return false;
             }
 
-            if !query.is_empty() {
-                let name = file_obj.name().to_lowercase();
-                if !name.contains(&query) {
+            if !query_borrow.is_empty() {
+                if !file_obj.with_entry(|e| e.name_lower.contains(query_borrow.as_str())) {
                     return false;
                 }
             }
@@ -178,10 +195,10 @@ impl FileView {
                 _ => {}
             }
 
-            let sort_by = sb_clone.borrow().clone();
+            let sb = sb_clone.borrow();
             let reversed = *sr_clone.borrow();
 
-            let order = match sort_by.as_str() {
+            let order = match sb.as_str() {
                 "size" => a.size().cmp(&b.size()),
                 "modified" => {
                     let time_a = a.with_entry(|e| e.modified);
@@ -189,15 +206,15 @@ impl FileView {
                     time_a.cmp(&time_b)
                 }
                 "type" => {
-                    let type_a = a.content_type();
-                    let type_b = b.content_type();
-                    type_a.cmp(&type_b)
+                    a.with_entry(|ea| {
+                        b.with_entry(|eb| ea.content_type.cmp(&eb.content_type))
+                    })
                 }
                 _ => {
-                    // Default: name (case-insensitive)
-                    let name_a = a.name().to_lowercase();
-                    let name_b = b.name().to_lowercase();
-                    name_a.cmp(&name_b)
+                    // Default: name (case-insensitive) using precomputed lowercase without allocations
+                    a.with_entry(|ea| {
+                        b.with_entry(|eb| ea.name_lower.cmp(&eb.name_lower))
+                    })
                 }
             };
 
@@ -271,6 +288,63 @@ impl FileView {
         let icon_size = Rc::new(RefCell::new(86));
         let icon_size_grid = icon_size.clone();
 
+        let (thumb_request_tx, thumb_rx) = channel::<ThumbnailRequest>();
+        let (thumb_done_tx, thumb_done_rx) = channel::<(PathBuf, u64)>();
+        let thumb_generation = Arc::new(AtomicU64::new(0));
+
+        let gen_worker = thumb_generation.clone();
+        std::thread::Builder::new()
+            .name("shark-thumb-worker".to_string())
+            .spawn(move || {
+                while let Ok(req) = thumb_rx.recv() {
+                    if req.generation != gen_worker.load(Ordering::Relaxed) {
+                        continue;
+                    }
+                    if generate_thumbnail_file(&req.path, &req.content_type, req.size) {
+                        if req.generation == gen_worker.load(Ordering::Relaxed) {
+                            let _ = thumb_done_tx.send((req.path, req.generation));
+                        }
+                    }
+                }
+            })
+            .expect("Failed to spawn thumbnail worker thread");
+
+        let list_store_thumb = list_store.clone();
+        let thumb_cache_async = thumbnail_cache.clone();
+        let gen_listener = thumb_generation.clone();
+
+        glib::timeout_add_local(Duration::from_millis(60), move || {
+            let mut updated_indices = Vec::new();
+            let current_gen = gen_listener.load(Ordering::Relaxed);
+
+            while let Ok((path, req_gen)) = thumb_done_rx.try_recv() {
+                if req_gen != current_gen {
+                    continue;
+                }
+                if let Some(texture) = load_fast_cached_thumbnail(&path, 96, 84) {
+                    thumb_cache_async.borrow_mut().insert(path.clone(), Some(texture));
+                    let count = list_store_thumb.n_items();
+                    for i in 0..count {
+                        if let Some(obj) = list_store_thumb.item(i).and_downcast::<FileObject>() {
+                            if obj.with_entry(|e| e.path == path) {
+                                updated_indices.push(i);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
+            for idx in updated_indices {
+                list_store_thumb.items_changed(idx, 1, 1);
+            }
+
+            glib::ControlFlow::Continue
+        });
+
+        let thumb_req_tx_grid = thumb_request_tx.clone();
+        let thumb_gen_grid = thumb_generation.clone();
+
         grid_factory.connect_bind(move |_, list_item| {
             let item = list_item.downcast_ref::<gtk4::ListItem>().unwrap();
             let file_obj = item.item().and_downcast::<FileObject>().unwrap();
@@ -312,19 +386,24 @@ impl FileView {
                         }
                     }
                     None => {
-                        let texture = load_media_thumbnail(&path, &content_type, size, 96, 84);
-                        if let Some(ref tex) = texture {
+                        if let Some(tex) = load_fast_cached_thumbnail(&path, 96, 84) {
                             icon.add_css_class("file-grid-thumbnail");
-                            icon.set_paintable(Some(tex));
-                        } else if let Some(fallback_tex) = icons_grid.resolve(&content_type, &path, false) {
-                            icon.set_paintable(Some(&fallback_tex));
+                            icon.set_paintable(Some(&tex));
+                            thumb_cache_grid.borrow_mut().insert(path, Some(tex));
                         } else {
-                            icon.set_icon_name(Some(&icon_name));
+                            if let Some(fallback_tex) = icons_grid.resolve(&content_type, &path, false) {
+                                icon.set_paintable(Some(&fallback_tex));
+                            } else {
+                                icon.set_icon_name(Some(&icon_name));
+                            }
+                            thumb_cache_grid.borrow_mut().insert(path.clone(), None);
+                            let _ = thumb_req_tx_grid.send(ThumbnailRequest {
+                                path,
+                                content_type,
+                                size,
+                                generation: thumb_gen_grid.load(Ordering::Relaxed),
+                            });
                         }
-                        if thumb_cache_grid.borrow().len() > 300 {
-                            thumb_cache_grid.borrow_mut().clear();
-                        }
-                        thumb_cache_grid.borrow_mut().insert(path, texture);
                     }
                 }
             } else {
@@ -338,23 +417,7 @@ impl FileView {
                 }
             }
 
-            detail.set_text(&file_obj.with_entry(|entry| {
-                if entry.is_directory {
-                    if let Ok(count) = std::fs::read_dir(&entry.path).map(|r| r.count()) {
-                        if count == 0 {
-                            "Empty".to_string()
-                        } else if count == 1 {
-                            "1 item".to_string()
-                        } else {
-                            format!("{} items", count)
-                        }
-                    } else {
-                        "Folder".to_string()
-                    }
-                } else {
-                    entry.formatted_size()
-                }
-            }));
+            detail.set_text(&file_obj.with_entry(|entry| entry.formatted_size()));
             label.set_text(&file_obj.name());
             card.set_tooltip_text(Some(&file_obj.name()));
         });
@@ -416,69 +479,83 @@ impl FileView {
             item.set_child(Some(&row));
         });
 
+        let thumb_req_tx_list = thumb_request_tx.clone();
+        let thumb_gen_list = thumb_generation.clone();
+
         list_factory.connect_bind(move |_, list_item| {
             let item = list_item.downcast_ref::<gtk4::ListItem>().unwrap();
             let file_obj = item.item().and_downcast::<FileObject>().unwrap();
             let row = item.child().and_downcast::<gtk4::Box>().unwrap();
 
-            let entry = file_obj.entry();
-
-            let mut child = row.first_child();
-            if let Some(icon) = child.as_ref().and_then(|c| c.downcast_ref::<gtk4::Image>()) {
-                if file_obj.is_directory() {
-                    if let Some(ref texture) = icons_list.folder {
-                        icon.set_paintable(Some(texture));
-                    } else {
-                        icon.set_icon_name(Some(&entry.icon_name));
-                    }
-                } else if is_previewable_media(&entry.content_type, &entry.path) {
-                    let cached = thumb_cache_list.borrow().get(&entry.path).cloned();
-                    if let Some(Some(ref texture)) = cached {
-                        icon.set_paintable(Some(texture));
-                    } else if cached.is_none() {
-                        let texture = load_media_thumbnail(&entry.path, &entry.content_type, entry.size, 32, 32);
-                        if let Some(ref tex) = texture {
-                            icon.set_paintable(Some(tex));
-                        } else if let Some(fallback_tex) = icons_list.resolve(&entry.content_type, &entry.path, false) {
-                            icon.set_paintable(Some(&fallback_tex));
+            file_obj.with_entry(|entry| {
+                let mut child = row.first_child();
+                if let Some(icon) = child.as_ref().and_then(|c| c.downcast_ref::<gtk4::Image>()) {
+                    if entry.is_directory {
+                        if let Some(ref texture) = icons_list.folder {
+                            icon.set_paintable(Some(texture));
                         } else {
                             icon.set_icon_name(Some(&entry.icon_name));
                         }
-                        if thumb_cache_list.borrow().len() > 300 {
-                            thumb_cache_list.borrow_mut().clear();
+                    } else if is_previewable_media(&entry.content_type, &entry.path) {
+                        let cached = thumb_cache_list.borrow().get(&entry.path).cloned();
+                        match cached {
+                            Some(Some(ref texture)) => {
+                                icon.set_paintable(Some(texture));
+                            }
+                            Some(None) => {
+                                if let Some(texture) = icons_list.resolve(&entry.content_type, &entry.path, false) {
+                                    icon.set_paintable(Some(&texture));
+                                } else {
+                                    icon.set_icon_name(Some(&entry.icon_name));
+                                }
+                            }
+                            None => {
+                                if let Some(tex) = load_fast_cached_thumbnail(&entry.path, 32, 32) {
+                                    icon.set_paintable(Some(&tex));
+                                    thumb_cache_list.borrow_mut().insert(entry.path.clone(), Some(tex));
+                                } else {
+                                    if let Some(fallback_tex) = icons_list.resolve(&entry.content_type, &entry.path, false) {
+                                        icon.set_paintable(Some(&fallback_tex));
+                                    } else {
+                                        icon.set_icon_name(Some(&entry.icon_name));
+                                    }
+                                    thumb_cache_list.borrow_mut().insert(entry.path.clone(), None);
+                                    let _ = thumb_req_tx_list.send(ThumbnailRequest {
+                                        path: entry.path.clone(),
+                                        content_type: entry.content_type.clone(),
+                                        size: entry.size,
+                                        generation: thumb_gen_list.load(Ordering::Relaxed),
+                                    });
+                                }
+                            }
                         }
-                        thumb_cache_list.borrow_mut().insert(entry.path.clone(), texture);
-                    } else if let Some(fallback_tex) = icons_list.resolve(&entry.content_type, &entry.path, false) {
-                        icon.set_paintable(Some(&fallback_tex));
+                    } else if let Some(texture) = icons_list.resolve(&entry.content_type, &entry.path, false) {
+                        icon.set_paintable(Some(&texture));
                     } else {
                         icon.set_icon_name(Some(&entry.icon_name));
                     }
-                } else if let Some(texture) = icons_list.resolve(&entry.content_type, &entry.path, false) {
-                    icon.set_paintable(Some(&texture));
-                } else {
-                    icon.set_icon_name(Some(&entry.icon_name));
                 }
-            }
 
-            child = child.and_then(|c| c.next_sibling());
-            if let Some(name_lbl) = child.as_ref().and_then(|c| c.downcast_ref::<gtk4::Label>()) {
-                name_lbl.set_text(&entry.name);
-            }
+                child = child.and_then(|c| c.next_sibling());
+                if let Some(name_lbl) = child.as_ref().and_then(|c| c.downcast_ref::<gtk4::Label>()) {
+                    name_lbl.set_text(&entry.name);
+                }
 
-            child = child.and_then(|c| c.next_sibling());
-            if let Some(size_lbl) = child.as_ref().and_then(|c| c.downcast_ref::<gtk4::Label>()) {
-                size_lbl.set_text(&entry.formatted_size());
-            }
+                child = child.and_then(|c| c.next_sibling());
+                if let Some(size_lbl) = child.as_ref().and_then(|c| c.downcast_ref::<gtk4::Label>()) {
+                    size_lbl.set_text(&entry.formatted_size());
+                }
 
-            child = child.and_then(|c| c.next_sibling());
-            if let Some(type_lbl) = child.as_ref().and_then(|c| c.downcast_ref::<gtk4::Label>()) {
-                type_lbl.set_text(&entry.type_description());
-            }
+                child = child.and_then(|c| c.next_sibling());
+                if let Some(type_lbl) = child.as_ref().and_then(|c| c.downcast_ref::<gtk4::Label>()) {
+                    type_lbl.set_text(&entry.type_description());
+                }
 
-            child = child.and_then(|c| c.next_sibling());
-            if let Some(date_lbl) = child.as_ref().and_then(|c| c.downcast_ref::<gtk4::Label>()) {
-                date_lbl.set_text(&entry.formatted_modified());
-            }
+                child = child.and_then(|c| c.next_sibling());
+                if let Some(date_lbl) = child.as_ref().and_then(|c| c.downcast_ref::<gtk4::Label>()) {
+                    date_lbl.set_text(&entry.formatted_modified());
+                }
+            });
         });
 
         let list_view = gtk4::ListView::builder()
@@ -648,6 +725,8 @@ impl FileView {
             header_type_label,
             header_date_label,
             on_sort_request,
+            thumb_request_tx,
+            thumb_generation,
         }
     }
 
@@ -705,6 +784,7 @@ impl FileView {
 
     /// Clear all items from view.
     pub fn clear(&self) {
+        self.thumb_generation.fetch_add(1, Ordering::Relaxed);
         self.list_store.remove_all();
         self.thumbnail_cache.borrow_mut().clear();
     }
