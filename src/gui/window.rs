@@ -594,7 +594,10 @@ impl SharkWindow {
         self.window.add_controller(mouse_nav);
 
         // Ctrl + Mouse Wheel Zoom
-        let scroll_controller = gtk4::EventControllerScroll::new(gtk4::EventControllerScrollFlags::VERTICAL);
+        let scroll_controller = gtk4::EventControllerScroll::new(
+            gtk4::EventControllerScrollFlags::VERTICAL | gtk4::EventControllerScrollFlags::DISCRETE,
+        );
+        scroll_controller.set_propagation_phase(gtk4::PropagationPhase::Capture);
         let shark_scroll = self.clone();
         scroll_controller.connect_scroll(move |controller, _dx, dy| {
             let state = controller.current_event_state();
@@ -639,6 +642,7 @@ impl SharkWindow {
         drop(hist);
 
         self.file_view.clear();
+        self.update_status_bar();
         self.empty_state_box.set_visible(false);
 
         // Monitor directory changes
@@ -731,6 +735,7 @@ impl SharkWindow {
         drop(hist);
 
         self.file_view.clear();
+        self.update_status_bar();
         self.empty_state_box.set_visible(false);
 
         let shark_m = self.clone();
