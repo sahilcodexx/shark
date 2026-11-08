@@ -170,6 +170,94 @@ pub fn is_previewable_media(content_type: &str, path: &Path) -> bool {
     is_image_entry(content_type, path) || is_video_entry(content_type, path)
 }
 
+/// Check if a pre-generated Freedesktop thumbnail already exists on disk in ~/.cache/thumbnails/.
+/// Fast and non-blocking: never runs external processes or full image decodes on the UI thread.
+pub fn load_fast_cached_thumbnail(
+    path: &Path,
+    target_width: i32,
+    target_height: i32,
+) -> Option<gtk4::gdk::Texture> {
+    let gfile = gio::File::for_path(path);
+    let uri = gfile.uri();
+    let hash = glib::compute_checksum_for_string(glib::ChecksumType::Md5, &uri)?;
+    let filename = format!("{}.png", hash);
+    let home = glib::home_dir();
+
+    for folder in ["normal", "large", "x-large"] {
+        let thumb_path = home
+            .join(".cache/thumbnails")
+            .join(folder)
+            .join(&filename);
+        if thumb_path.exists() {
+            if let Ok(pixbuf) = gtk4::gdk_pixbuf::Pixbuf::from_file_at_scale(&thumb_path, target_width, target_height, true) {
+                return Some(gtk4::gdk::Texture::for_pixbuf(&pixbuf));
+            }
+        }
+    }
+
+    None
+}
+
+/// Generate a thumbnail into ~/.cache/thumbnails/normal/ in a background thread.
+pub fn generate_thumbnail_file(path: &Path, content_type: &str, size: u64) -> bool {
+    let gfile = gio::File::for_path(path);
+    let uri = gfile.uri();
+    let Some(hash) = glib::compute_checksum_for_string(glib::ChecksumType::Md5, &uri) else {
+        return false;
+    };
+    let home = glib::home_dir();
+    let normal_cache = home.join(".cache/thumbnails/normal");
+    let _ = std::fs::create_dir_all(&normal_cache);
+    let target_thumb = normal_cache.join(format!("{}.png", hash));
+
+    if target_thumb.exists() {
+        return true;
+    }
+
+    // 1. Video thumbnail via ffmpegthumbnailer or ffmpeg
+    if is_video_entry(content_type, path) {
+        let thumb_ok = std::process::Command::new("ffmpegthumbnailer")
+            .arg("-i")
+            .arg(path)
+            .arg("-o")
+            .arg(&target_thumb)
+            .arg("-s")
+            .arg("128")
+            .arg("-c")
+            .arg("png")
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+
+        if !thumb_ok || !target_thumb.exists() {
+            let _ = std::process::Command::new("ffmpeg")
+                .arg("-ss")
+                .arg("00:00:01")
+                .arg("-i")
+                .arg(path)
+                .arg("-vframes")
+                .arg("1")
+                .arg("-vf")
+                .arg("scale=128:-1")
+                .arg("-y")
+                .arg(&target_thumb)
+                .status();
+        }
+
+        return target_thumb.exists();
+    }
+
+    // 2. Image thumbnail generation
+    if is_image_entry(content_type, path) && size <= 25 * 1024 * 1024 {
+        if let Ok(pixbuf) = gtk4::gdk_pixbuf::Pixbuf::from_file_at_scale(path, 128, 128, true) {
+            let _ = pixbuf.savev(&target_thumb, "png", &[]);
+            return target_thumb.exists();
+        }
+    }
+
+    false
+}
+
 /// Load a media thumbnail (image or video) with Freedesktop cache lookup and on-the-fly generation.
 pub fn load_media_thumbnail(
     path: &Path,
@@ -182,71 +270,12 @@ pub fn load_media_thumbnail(
         return None;
     }
 
-    // 1. Try freedesktop thumbnail cache (~/.cache/thumbnails/large, normal, or x-large)
-    let gfile = gio::File::for_path(path);
-    let uri = gfile.uri();
-    let home = glib::home_dir();
-    if let Some(hash) = glib::compute_checksum_for_string(glib::ChecksumType::Md5, &uri) {
-        let filename = format!("{}.png", hash);
-        for folder in ["large", "normal", "x-large"] {
-            let thumb_path = home
-                .join(".cache/thumbnails")
-                .join(folder)
-                .join(&filename);
-            if thumb_path.exists() {
-                if let Ok(pixbuf) = gtk4::gdk_pixbuf::Pixbuf::from_file_at_scale(&thumb_path, target_width, target_height, true) {
-                    return Some(gtk4::gdk::Texture::for_pixbuf(&pixbuf));
-                }
-            }
-        }
-
-        // 2. Video thumbnail generation via ffmpegthumbnailer or ffmpeg
-        if is_video_entry(content_type, path) {
-            let normal_cache = home.join(".cache/thumbnails/normal");
-            let _ = std::fs::create_dir_all(&normal_cache);
-            let target_thumb = normal_cache.join(&filename);
-
-            let thumb_ok = std::process::Command::new("ffmpegthumbnailer")
-                .arg("-i")
-                .arg(path)
-                .arg("-o")
-                .arg(&target_thumb)
-                .arg("-s")
-                .arg("128")
-                .arg("-c")
-                .arg("png")
-                .status()
-                .map(|s| s.success())
-                .unwrap_or(false);
-
-            if !thumb_ok || !target_thumb.exists() {
-                let _ = std::process::Command::new("ffmpeg")
-                    .arg("-ss")
-                    .arg("00:00:01")
-                    .arg("-i")
-                    .arg(path)
-                    .arg("-vframes")
-                    .arg("1")
-                    .arg("-vf")
-                    .arg("scale=128:-1")
-                    .arg("-y")
-                    .arg(&target_thumb)
-                    .status();
-            }
-
-            if target_thumb.exists() {
-                if let Ok(pixbuf) = gtk4::gdk_pixbuf::Pixbuf::from_file_at_scale(&target_thumb, target_width, target_height, true) {
-                    return Some(gtk4::gdk::Texture::for_pixbuf(&pixbuf));
-                }
-            }
-        }
+    if let Some(tex) = load_fast_cached_thumbnail(path, target_width, target_height) {
+        return Some(tex);
     }
 
-    // 3. Direct on-the-fly image thumbnail generation for images under 25MB
-    if is_image_entry(content_type, path) && size <= 25 * 1024 * 1024 {
-        if let Ok(pixbuf) = gtk4::gdk_pixbuf::Pixbuf::from_file_at_scale(path, target_width, target_height, true) {
-            return Some(gtk4::gdk::Texture::for_pixbuf(&pixbuf));
-        }
+    if generate_thumbnail_file(path, content_type, size) {
+        return load_fast_cached_thumbnail(path, target_width, target_height);
     }
 
     None
