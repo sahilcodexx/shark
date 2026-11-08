@@ -250,9 +250,22 @@ paned > separator {
 }
 
 /* Main file views */
-gridview, listview {
+gridview, listview, scrolledwindow {
     background: @shark_bg;
     color: @shark_text;
+    outline: none;
+    box-shadow: none;
+}
+gridview:focus,
+gridview:focus-visible,
+listview:focus,
+listview:focus-visible,
+scrolledwindow:focus,
+scrolledwindow:focus-visible,
+paned:focus,
+paned:focus-visible {
+    outline: none;
+    box-shadow: none;
 }
 gridview {
     padding: 10px 20px 24px;
@@ -315,7 +328,7 @@ gridview > child:selected .file-grid-detail {
 .file-list-header {
     padding: 3px 16px;
     margin: 2px 8px 4px 8px;
-    border-bottom: 1px solid alpha(@shark_border, 0.4);
+    border-bottom: 1px solid @shark_line;
 }
 .file-list-header-btn {
     padding: 3px 6px;
@@ -412,8 +425,12 @@ entry:focus {
     color: @error_color;
 }
 *:focus-visible {
-    outline: 2px solid @shark_accent;
-    outline-offset: -2px;
+    outline: none;
+}
+button:focus-visible,
+entry:focus-visible {
+    outline: 2px solid alpha(@shark_accent, 0.65);
+    outline-offset: -1px;
 }
 
 /* Search command palette */
