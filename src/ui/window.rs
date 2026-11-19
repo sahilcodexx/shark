@@ -116,7 +116,8 @@ pub struct MainWindow {
     pub type_filter: TypeFilter,
     pub date_filter: DateFilter,
     pub size_filter: SizeFilter,
-    pub     pub enable_thumbnails: bool,
+    pub show_filter_menu: bool,
+    pub enable_thumbnails: bool,
     pub confirm_delete: bool,
     pub show_inspector: bool,
     pub zoom: f32,
@@ -3292,7 +3293,10 @@ impl Render for MainWindow {
                 }
             }))
             .child(toolbar)
-                        .child(
+            .when(self.has_active_filters(), |d| {
+                d.child(self.render_active_filters_bar(cx))
+            })
+            .child(
                 div()
                     .flex_1()
                     .flex()
@@ -3302,7 +3306,10 @@ impl Render for MainWindow {
                     .children(inspector),
             )
             .child(status_bar)
-                        .when(self.show_settings_modal, |d| {
+            .when(self.show_filter_menu, |d| {
+                d.child(self.render_filter_popover(cx))
+            })
+            .when(self.show_settings_modal, |d| {
                 d.child(self.render_settings_modal(cx))
             })
             .when(self.show_command_palette, |d| {
