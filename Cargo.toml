@@ -4,9 +4,29 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-gtk4 = "0.11"
-glib = "0.22"
-gdk4 = "0.11"
-gio = "0.22"
+gpui = { package = "gpui-pre", version = "=0.3.9", default-features = false, features = ["wayland", "x11"] }
+gpui_platform = { package = "gpui-pre-platform", version = "=0.3.9", default-features = false, features = ["wayland", "x11"] }
+async-channel = "2"
+chrono = "0.4"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+libc = "0.2"
+dirs = "5.0"
+md-5 = "0.10"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
+
+[patch.crates-io]
+gpui-pre = { path = "vendor/gpui-pre" }
+gpui-pre-apple = { path = "vendor/gpui-pre-apple" }
+gpui-pre-linux = { path = "vendor/gpui-pre-linux" }
+gpui-pre-macos = { path = "vendor/gpui-pre-macos" }
+
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+opt-level = 1
+debug = false
+
+[profile.dev.package.gpui-pre]
+incremental = false
