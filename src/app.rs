@@ -1,68 +1,54 @@
-//! Application setup and lifecycle for the Shark file manager.
+//! Application setup and run loop for Shark GPUI file manager.
 
-use crate::gui::SharkWindow;
-use gtk4::gdk;
-use gtk4::prelude::*;
+use crate::assets::Assets;
+use crate::config::Config;
+use crate::ui::MainWindow;
+use gpui::{
+    point, px, size, App, AppContext, Bounds, TitlebarOptions, WindowBackgroundAppearance,
+    WindowBounds, WindowOptions,
+};
+use std::path::PathBuf;
 
-pub struct SharkApp {
-    app: gtk4::Application,
-}
-
-impl Default for SharkApp {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+pub struct SharkApp;
 
 impl SharkApp {
-    pub fn new() -> Self {
-        let app = gtk4::Application::builder()
-            .application_id("com.shark.filemanager")
-            .flags(gio::ApplicationFlags::HANDLES_OPEN)
-            .build();
+    pub fn run(folder: Option<PathBuf>) {
+        let platform = gpui_platform::current_platform(false);
+        let app = gpui::Application::with_platform(platform).with_assets(Assets);
 
-        app.connect_startup(|_| {
-            Self::load_styles();
+        app.run(move |cx: &mut App| {
+            let config = Config::load();
+            let initial_path = folder
+                .or(config.last_directory)
+                .unwrap_or_else(|| dirs::home_dir().unwrap_or_else(|| PathBuf::from("/")));
+
+            let width = config.window_width as f32;
+            let height = config.window_height as f32;
+
+            let bounds = WindowBounds::Windowed(Bounds {
+                origin: point(px(100.), px(80.)),
+                size: size(px(width.max(800.)), px(height.max(550.))),
+            });
+
+            let options = WindowOptions {
+                window_bounds: Some(bounds),
+                window_min_size: Some(size(px(700.), px(480.))),
+                window_background: WindowBackgroundAppearance::Opaque,
+                app_id: Some("shark".into()),
+                titlebar: Some(TitlebarOptions {
+                    title: Some("Shark".into()),
+                    appears_transparent: false,
+                    traffic_light_position: None,
+                }),
+                ..Default::default()
+            };
+
+            cx.open_window(options, move |_, cx| {
+                cx.new(|cx| MainWindow::new(initial_path, cx))
+            })
+            .expect("Failed to open Shark window");
+
+            cx.activate(true);
         });
-
-        app.connect_activate(|app| {
-            let shark_win = SharkWindow::new(app);
-            shark_win.window.present();
-        });
-
-        app.connect_open(|app, files, _| {
-            if let Some(file) = files.first()
-                && let Some(path) = file.path() {
-                    let shark_win = SharkWindow::new(app);
-                    shark_win.navigate_to(path);
-                    shark_win.window.present();
-                    return;
-                }
-            let shark_win = SharkWindow::new(app);
-            shark_win.window.present();
-        });
-
-        SharkApp { app }
-    }
-
-    /// Load the application CSS stylesheet.
-    fn load_styles() {
-        let provider = gtk4::CssProvider::new();
-
-        // Embed the stylesheet directly to guarantee it is always available
-        const STYLE_CSS: &str = include_str!("../assets/styles/style.css");
-        provider.load_from_data(STYLE_CSS);
-
-        if let Some(display) = gdk::Display::default() {
-            gtk4::style_context_add_provider_for_display(
-                &display,
-                &provider,
-                gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
-            );
-        }
-    }
-
-    pub fn run(&self) -> glib::ExitCode {
-        self.app.run()
     }
 }

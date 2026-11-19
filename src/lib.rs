@@ -1,14 +1,17 @@
-//! Shark file manager library.
+//! Shark file manager library - High-performance GPU-accelerated file manager.
 
 pub mod app;
+pub mod assets;
 pub mod config;
 pub mod filesystem;
-pub mod gui;
 pub mod models;
 pub mod navigation;
+pub mod theme;
+pub mod thumbnails;
+pub mod ui;
 pub mod utils;
 
 pub use app::SharkApp;
 pub use config::Config;
-pub use models::{FileEntry, FileObject};
+pub use models::FileEntry;
 pub use navigation::NavigationHistory;

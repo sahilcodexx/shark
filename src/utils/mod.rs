@@ -1,8 +1,8 @@
 //! Utility functions for the Shark file manager.
 
-use std::path::Path;
+use md5::{Digest, Md5};
+use std::path::{Path, PathBuf};
 use std::time::SystemTime;
-use gio::prelude::*;
 
 /// Convert bytes to human-readable size string.
 pub fn format_size(bytes: u64) -> String {
@@ -32,21 +32,8 @@ pub fn format_date(time: Option<SystemTime>) -> String {
     let Some(time) = time else {
         return "Unknown".to_string();
     };
-
-    let Ok(elapsed) = time.duration_since(SystemTime::UNIX_EPOCH) else {
-        return "Unknown".to_string();
-    };
-
-    let total_secs = elapsed.as_secs();
-    // Use glib::DateTime for timezone-aware local time formatting
-    if let Ok(dt) = glib::DateTime::from_unix_local(total_secs as i64)
-        && let Ok(formatted) = dt.format("%Y-%m-%d %H:%M") {
-            return formatted.to_string();
-        }
-
-    // Fallback: simple date calculation
-    let days = total_secs / 86400;
-    format!("{} days ago", days)
+    let dt: chrono::DateTime<chrono::Local> = time.into();
+    dt.format("%Y-%m-%d %H:%M").to_string()
 }
 
 /// Format Unix file permissions to standard rwxrwxrwx string.
@@ -121,18 +108,24 @@ pub fn get_content_type_description(mime: &str, is_dir: bool) -> String {
     }
 }
 
-#[allow(dead_code)]
 /// Get the file extension from a path.
 pub fn get_extension(path: &Path) -> Option<String> {
     path.extension().and_then(|e| e.to_str()).map(|e| e.to_string())
 }
 
-/// Format free disk space for a given path.
+/// Format free disk space for a given path using POSIX statvfs.
 pub fn get_disk_free_space<P: AsRef<Path>>(path: P) -> Option<String> {
-    let file = gio::File::for_path(path);
-    let info = file.query_filesystem_info("filesystem::free", gio::Cancellable::NONE).ok()?;
-    let free = info.attribute_uint64("filesystem::free");
-    Some(format_size(free))
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+    let cpath = CString::new(path.as_ref().as_os_str().as_bytes()).ok()?;
+    unsafe {
+        let mut stat: libc::statvfs = std::mem::zeroed();
+        if libc::statvfs(cpath.as_ptr(), &mut stat) == 0 {
+            let free_bytes = stat.f_bavail as u64 * stat.f_frsize as u64;
+            return Some(format_size(free_bytes));
+        }
+    }
+    None
 }
 
 /// Check if a file is an image based on MIME type or file extension.
@@ -170,48 +163,66 @@ pub fn is_previewable_media(content_type: &str, path: &Path) -> bool {
     is_image_entry(content_type, path) || is_video_entry(content_type, path)
 }
 
-/// Check if a pre-generated Freedesktop thumbnail already exists on disk in ~/.cache/thumbnails/.
-/// Fast and non-blocking: never runs external processes or full image decodes on the UI thread.
-pub fn load_fast_cached_thumbnail(
-    path: &Path,
-    target_width: i32,
-    target_height: i32,
-) -> Option<gtk4::gdk::Texture> {
-    let gfile = gio::File::for_path(path);
-    let uri = gfile.uri();
-    let hash = glib::compute_checksum_for_string(glib::ChecksumType::Md5, &uri)?;
-    let filename = format!("{}.png", hash);
-    let home = glib::home_dir();
-
-    for folder in ["normal", "large", "x-large"] {
-        let thumb_path = home
-            .join(".cache/thumbnails")
-            .join(folder)
-            .join(&filename);
-        if thumb_path.exists() {
-            if let Ok(pixbuf) = gtk4::gdk_pixbuf::Pixbuf::from_file_at_scale(&thumb_path, target_width, target_height, true) {
-                return Some(gtk4::gdk::Texture::for_pixbuf(&pixbuf));
+/// RFC 2396 percent-encode path for Freedesktop URI standard.
+pub fn percent_encode_path(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() * 3);
+    for b in s.as_bytes() {
+        match *b {
+            b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' | b'/' => {
+                out.push(*b as char);
+            }
+            byte => {
+                use std::fmt::Write;
+                let _ = write!(out, "%{:02X}", byte);
             }
         }
     }
+    out
+}
 
+/// Find a cached Freedesktop thumbnail on disk in ~/.cache/thumbnails/.
+/// Supports both RFC 2396 percent-encoded URIs (Dolphin/GNOME) and raw URIs.
+pub fn find_cached_thumbnail_path(path: &Path) -> Option<PathBuf> {
+    let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let path_str = canonical.to_string_lossy();
+    let home = dirs::home_dir()?;
+    let thumbs_root = home.join(".cache/thumbnails");
+
+    // 1. Raw URI (file:///path)
+    let raw_uri = format!("file://{}", path_str);
+    let hash_raw = format!("{:x}", Md5::digest(raw_uri.as_bytes()));
+
+    // 2. Encoded URI (file:///path%20with%20spaces - Freedesktop standard)
+    let enc_uri = format!("file://{}", percent_encode_path(&path_str));
+    let hash_enc = format!("{:x}", Md5::digest(enc_uri.as_bytes()));
+
+    for folder in ["normal", "large", "x-large"] {
+        let dir = thumbs_root.join(folder);
+        let p_enc = dir.join(format!("{}.png", hash_enc));
+        if p_enc.exists() {
+            return Some(p_enc);
+        }
+        let p_raw = dir.join(format!("{}.png", hash_raw));
+        if p_raw.exists() {
+            return Some(p_raw);
+        }
+    }
     None
 }
 
-/// Generate a thumbnail into ~/.cache/thumbnails/normal/ in a background thread.
-pub fn generate_thumbnail_file(path: &Path, content_type: &str, size: u64) -> bool {
-    let gfile = gio::File::for_path(path);
-    let uri = gfile.uri();
-    let Some(hash) = glib::compute_checksum_for_string(glib::ChecksumType::Md5, &uri) else {
-        return false;
-    };
-    let home = glib::home_dir();
+/// Generate a thumbnail into ~/.cache/thumbnails/normal/ in a background worker.
+pub fn generate_thumbnail_file(path: &Path, content_type: &str, _size: u64) -> Option<PathBuf> {
+    let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let path_str = canonical.to_string_lossy();
+    let enc_uri = format!("file://{}", percent_encode_path(&path_str));
+    let hash = format!("{:x}", Md5::digest(enc_uri.as_bytes()));
+    let home = dirs::home_dir()?;
     let normal_cache = home.join(".cache/thumbnails/normal");
     let _ = std::fs::create_dir_all(&normal_cache);
     let target_thumb = normal_cache.join(format!("{}.png", hash));
 
     if target_thumb.exists() {
-        return true;
+        return Some(target_thumb);
     }
 
     // 1. Video thumbnail via ffmpegthumbnailer or ffmpeg
@@ -222,7 +233,7 @@ pub fn generate_thumbnail_file(path: &Path, content_type: &str, size: u64) -> bo
             .arg("-o")
             .arg(&target_thumb)
             .arg("-s")
-            .arg("128")
+            .arg("256")
             .arg("-c")
             .arg("png")
             .status()
@@ -238,56 +249,30 @@ pub fn generate_thumbnail_file(path: &Path, content_type: &str, size: u64) -> bo
                 .arg("-vframes")
                 .arg("1")
                 .arg("-vf")
-                .arg("scale=128:-1")
+                .arg("scale=256:-1")
                 .arg("-y")
                 .arg(&target_thumb)
                 .status();
         }
 
-        return target_thumb.exists();
-    }
-
-    // 2. Image thumbnail generation
-    if is_image_entry(content_type, path) && size <= 25 * 1024 * 1024 {
-        if let Ok(pixbuf) = gtk4::gdk_pixbuf::Pixbuf::from_file_at_scale(path, 128, 128, true) {
-            let _ = pixbuf.savev(&target_thumb, "png", &[]);
-            return target_thumb.exists();
+        if target_thumb.exists() {
+            return Some(target_thumb);
         }
     }
 
-    false
-}
-
-/// Load a media thumbnail (image or video) with Freedesktop cache lookup and on-the-fly generation.
-pub fn load_media_thumbnail(
-    path: &Path,
-    content_type: &str,
-    size: u64,
-    target_width: i32,
-    target_height: i32,
-) -> Option<gtk4::gdk::Texture> {
-    if !is_previewable_media(content_type, path) {
-        return None;
-    }
-
-    if let Some(tex) = load_fast_cached_thumbnail(path, target_width, target_height) {
-        return Some(tex);
-    }
-
-    if generate_thumbnail_file(path, content_type, size) {
-        return load_fast_cached_thumbnail(path, target_width, target_height);
+    // 2. Image thumbnail via image crate downsampled to 256x256
+    if is_image_entry(content_type, path) {
+        if let Ok(reader) = image::ImageReader::open(path) {
+            if let Ok(reader) = reader.with_guessed_format() {
+                if let Ok(img) = reader.decode() {
+                    let thumb = img.thumbnail(256, 256);
+                    if thumb.save_with_format(&target_thumb, image::ImageFormat::Png).is_ok() {
+                        return Some(target_thumb);
+                    }
+                }
+            }
+        }
     }
 
     None
-}
-
-/// Load an image thumbnail (backwards-compatible alias).
-pub fn load_image_thumbnail(
-    path: &Path,
-    content_type: &str,
-    size: u64,
-    target_width: i32,
-    target_height: i32,
-) -> Option<gtk4::gdk::Texture> {
-    load_media_thumbnail(path, content_type, size, target_width, target_height)
 }

@@ -34,7 +34,7 @@ fn default_background_mode() -> String {
 
 impl Default for Config {
     fn default() -> Self {
-        let home = glib::home_dir();
+        let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
         let default_bookmarks = vec![
             home.join("Documents"),
             home.join("Downloads"),
@@ -63,8 +63,10 @@ impl Default for Config {
 impl Config {
     /// Get the configuration file path: ~/.config/shark/config.json
     fn config_path() -> PathBuf {
-        let base = glib::user_config_dir();
-        base.join("shark").join("config.json")
+        dirs::config_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("shark")
+            .join("config.json")
     }
 
     /// Load configuration from disk, or return default if missing or invalid.
@@ -95,7 +97,7 @@ impl Config {
             && dir.exists() && dir.is_dir() {
                 return dir.clone();
             }
-        glib::home_dir()
+        dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"))
     }
 
     /// Add a path to bookmarks if not already present.
