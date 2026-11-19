@@ -1,6 +1,5 @@
 //! File operations (copy, move, trash, delete, rename, create) for Shark.
 
-use gio::prelude::*;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
@@ -59,17 +58,77 @@ pub fn get_unique_path(parent: &Path, name: &str) -> PathBuf {
     }
 }
 
-/// Move files or directories to system Trash using GIO.
+/// Move files or directories to system Trash.
 pub fn trash_paths(paths: &[PathBuf]) -> Result<usize, String> {
     let mut trashed = 0;
     for path in paths {
-        let gfile = gio::File::for_path(path);
-        if let Err(e) = gfile.trash(gio::Cancellable::NONE) {
-            return Err(format!("Failed to trash {:?}: {}", path, e));
+        let status = std::process::Command::new("gio")
+            .arg("trash")
+            .arg(path)
+            .status();
+        if let Ok(s) = status && s.success() {
+            trashed += 1;
+            continue;
         }
-        trashed += 1;
+
+        let status = std::process::Command::new("trash-put")
+            .arg(path)
+            .status();
+        if let Ok(s) = status && s.success() {
+            trashed += 1;
+            continue;
+        }
+
+        if let Some(data_dir) = dirs::data_local_dir() {
+            let trash_files = data_dir.join("Trash/files");
+            let _ = std::fs::create_dir_all(&trash_files);
+            if let Some(file_name) = path.file_name() {
+                let target = get_unique_path(&trash_files, &file_name.to_string_lossy());
+                if std::fs::rename(path, &target).is_ok() {
+                    trashed += 1;
+                    continue;
+                }
+            }
+        }
+        return Err(format!("Failed to trash {:?}", path));
     }
     Ok(trashed)
+}
+
+/// Open a path with the desktop default application (xdg-open).
+pub fn open_path(path: &Path) {
+    let _ = std::process::Command::new("xdg-open")
+        .arg(path)
+        .spawn();
+}
+
+/// Open path in terminal.
+pub fn open_in_terminal(path: &Path) {
+    let folder = if path.is_dir() { path } else { path.parent().unwrap_or(path) };
+    let _ = std::process::Command::new("xdg-terminal-exec")
+        .current_dir(folder)
+        .spawn()
+        .or_else(|_| {
+            let term = std::env::var("TERMINAL").unwrap_or_else(|_| "x-terminal-emulator".to_string());
+            std::process::Command::new(&term)
+                .current_dir(folder)
+                .spawn()
+        })
+        .or_else(|_| {
+            std::process::Command::new("alacritty")
+                .current_dir(folder)
+                .spawn()
+        })
+        .or_else(|_| {
+            std::process::Command::new("gnome-terminal")
+                .arg(format!("--working-directory={}", folder.display()))
+                .spawn()
+        })
+        .or_else(|_| {
+            std::process::Command::new("xterm")
+                .current_dir(folder)
+                .spawn()
+        });
 }
 
 /// Permanently delete files or directories without moving to trash.

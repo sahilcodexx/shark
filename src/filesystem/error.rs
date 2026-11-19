@@ -39,8 +39,4 @@ impl From<std::io::Error> for FilesystemError {
     }
 }
 
-impl From<glib::Error> for FilesystemError {
-    fn from(err: glib::Error) -> Self {
-        Self::Io(err.to_string())
-    }
-}
+

@@ -1,11 +1,13 @@
 //! Filesystem module for the Shark file manager.
 
+pub mod cache;
 pub mod error;
 pub mod metadata;
 pub mod monitor;
 pub mod operations;
 pub mod scanner;
 
+pub use cache::DirectoryCache;
 pub use monitor::DirectoryMonitor;
 pub use operations::{
     copy_paths_async, create_file, create_folder, delete_paths_permanent, get_unique_path,
