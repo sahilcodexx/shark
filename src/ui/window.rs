@@ -5,11 +5,11 @@ use crate::filesystem::operations::{open_in_terminal, open_path};
 use crate::filesystem::scanner::{scan_directory_async, ScanMessage};
 use crate::models::file_entry::FileEntry;
 use crate::navigation::history::NavigationHistory;
-use crate::theme::{self, button, icon, icon_button, ButtonLook, RADIUS_CARD, RADIUS_ROW, RADIUS_THUMB, SIDEBAR_ROW_HEIGHT, TITLE_BAR_HEIGHT};
+use crate::theme::{self, button, icon, icon_button, ButtonLook, RADIUS_CARD, RADIUS_ROW, RADIUS_THUMB, TITLE_BAR_HEIGHT};
 use crate::thumbnails::ThumbnailCache;
 use gpui::{
-    actions, div, img, prelude::*, px, uniform_list, AnyElement, ClickEvent, Context,
-    Div, ElementId, FocusHandle, IntoElement, KeyDownEvent, Render, ScrollWheelEvent,
+    actions, div, img, prelude::*, px, uniform_list, AnyElement, BoxShadow, ClickEvent, Context,
+    Div, ElementId, FocusHandle, Hsla, IntoElement, KeyDownEvent, Render, ScrollWheelEvent,
     UniformListScrollHandle, Window,
 };
 use std::path::{Path, PathBuf};
@@ -100,6 +100,7 @@ pub enum PaletteAction {
     SetDateFilter(DateFilter),
     SetSizeFilter(SizeFilter),
     ResetFilters,
+    SetTheme(theme::ThemeMode),
 }
 
 pub struct MainWindow {
@@ -138,6 +139,8 @@ pub struct MainWindow {
     pub search_active: bool,
     pub path_editing: bool,
     pub path_input_text: String,
+    pub theme_mode: theme::ThemeMode,
+    pub active_theme: theme::ThemeColors,
 }
 
 impl MainWindow {
@@ -196,6 +199,12 @@ impl MainWindow {
             search_active: false,
             path_editing: false,
             path_input_text: String::new(),
+            theme_mode: match crate::config::Config::load().theme.as_str() {
+                "light" => theme::ThemeMode::Light,
+                "dark" => theme::ThemeMode::Dark,
+                _ => theme::ThemeMode::System,
+            },
+            active_theme: theme::ThemeColors::light(),
         };
 
         win.navigate_to(initial_path, cx);
@@ -569,142 +578,191 @@ impl MainWindow {
 
     // --- Sub-renderers ---
 
-    fn render_header(&self, cx: &mut Context<Self>) -> Div {
+    fn render_header(&self, theme: &theme::ThemeColors, cx: &mut Context<Self>) -> Div {
         let can_back = self.history.can_go_back();
         let can_forward = self.history.can_go_forward();
-        let can_up = self.current_path.parent().is_some();
+        let folder_name = self.current_path.file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| "/".to_string());
+
+        let divider = || {
+            div()
+                .w(px(1.))
+                .h(px(14.))
+                .bg(theme.button_border)
+        };
 
         div()
             .h(px(TITLE_BAR_HEIGHT))
             .px_3()
-            .bg(theme::shell_fill())
+            .bg(theme.topbar)
             .border_b_1()
-            .border_color(theme::border_color())
+            .border_color(theme.topbar_border)
             .flex()
             .items_center()
             .justify_between()
             .gap_3()
-            // Left navigation cluster: Back, Forward, Up, Refresh
+            // Left navigation cluster: Back / Forward in joint capsule + Folder title
             .child(
                 div()
                     .flex()
                     .items_center()
-                    .gap_1()
+                    .gap_3()
                     .child(
-                        icon_button("nav-back", "chevron-left", false, can_back)
-                            .on_click(cx.listener(|this, _, _, cx| this.go_back(cx))),
+                        theme::macos_joint_container("nav-segment", theme)
+                            .child(
+                                theme::macos_joint_button("nav-back", "chevron-left", false, can_back, theme)
+                                    .on_click(cx.listener(|this, _, _, cx| this.go_back(cx))),
+                            )
+                            .child(divider())
+                            .child(
+                                theme::macos_joint_button("nav-forward", "chevron-right", false, can_forward, theme)
+                                    .on_click(cx.listener(|this, _, _, cx| this.go_forward(cx))),
+                            ),
                     )
                     .child(
-                        icon_button("nav-forward", "chevron-right", false, can_forward)
-                            .on_click(cx.listener(|this, _, _, cx| this.go_forward(cx))),
-                    )
-                    .child(
-                        icon_button("nav-up", "arrow-up", false, can_up)
-                            .on_click(cx.listener(|this, _, _, cx| this.go_up(cx))),
-                    )
-                    .child(
-                        icon_button("nav-refresh", "rotate-cw", false, true)
-                            .on_click(cx.listener(|this, _, _, cx| this.refresh(cx))),
+                        if self.path_editing {
+                            div()
+                                .id("path-editing-box")
+                                .flex_1()
+                                .min_w(px(280.))
+                                .child(self.render_breadcrumb(cx))
+                        } else {
+                            div()
+                                .id("current-folder-title-pill")
+                                .flex()
+                                .items_center()
+                                .gap_2()
+                                .cursor_pointer()
+                                .hover(|s| s.opacity(0.85))
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.path_editing = true;
+                                    this.path_input_text = this.current_path.to_string_lossy().to_string();
+                                    cx.notify();
+                                }))
+                                .child(
+                                    div()
+                                        .text_size(px(15.))
+                                        .font_weight(gpui::FontWeight::BOLD)
+                                        .text_color(theme.text_primary)
+                                        .child(folder_name),
+                                )
+                                .child(
+                                    theme::icon("chevron-down-hi", 11.)
+                                        .text_color(theme.text_faint),
+                                )
+                        }
                     ),
             )
-            // Center breadcrumb / URL path bar
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .child(self.render_breadcrumb(cx)),
-            )
-            // Right controls cluster
+            // Right controls cluster: Joint Capsules + Search Bar (matching macOS Finder in Image 2)
             .child(
                 div()
                     .flex()
                     .items_center()
-                    .gap_2()
-                    // Search / Command Palette Trigger
+                    .gap_2p5()
+                    // 1. Segmented View Mode Switcher [ ⊞ | ≡ ]
+                    .child(
+                        theme::macos_joint_container("view-switcher-seg", theme)
+                            .child(
+                                theme::macos_joint_button("view-grid", "grid", self.view_mode == ViewMode::Grid, true, theme)
+                                    .on_click(cx.listener(|this, _, _, cx| this.set_view_mode(ViewMode::Grid, cx))),
+                            )
+                            .child(divider())
+                            .child(
+                                theme::macos_joint_button("view-list", "list", self.view_mode == ViewMode::List, true, theme)
+                                    .on_click(cx.listener(|this, _, _, cx| this.set_view_mode(ViewMode::List, cx))),
+                            ),
+                    )
+                    // 2. Joint action capsule: [ ⇧ | 🏷 | ⋯ ] (Share, Tag/Filter, More grouped in ONE capsule)
+                    .child(
+                        theme::macos_joint_container("joint-actions-capsule", theme)
+                            .child(
+                                theme::macos_joint_button("joint-btn-share", "share", false, true, theme)
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        let path_str = if let Some(e) = this.selected_index.and_then(|i| this.entry_at(i)) {
+                                            e.path.to_string_lossy().to_string()
+                                        } else {
+                                            this.current_path.to_string_lossy().to_string()
+                                        };
+                                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(path_str));
+                                    })),
+                            )
+                            .child(divider())
+                            .child(
+                                theme::macos_joint_button(
+                                    "joint-btn-filter",
+                                    "tag",
+                                    self.show_filter_menu || self.has_active_filters(),
+                                    true,
+                                    theme,
+                                )
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.show_filter_menu = !this.show_filter_menu;
+                                    cx.notify();
+                                })),
+                            )
+                            .child(divider())
+                            .child(
+                                theme::macos_joint_button(
+                                    "joint-btn-more",
+                                    "more-horizontal",
+                                    self.show_command_palette,
+                                    true,
+                                    theme,
+                                )
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.show_command_palette = true;
+                                    this.command_palette_query.clear();
+                                    this.command_palette_selected = 0;
+                                    cx.notify();
+                                })),
+                            ),
+                    )
+                    // 3. macOS Sleek Search Pill [ 🔍 Search                        ]
                     .child(
                         div()
-                            .id("search-filter-pill")
+                            .id("macos-search-bar")
+                            .w(px(220.))
                             .h(px(theme::BUTTON_HEIGHT))
                             .px_3()
-                            .bg(theme::card_fill())
-                            .rounded(px(RADIUS_ROW))
+                            .bg(theme.search_fill)
+                            .rounded_full()
                             .border_1()
-                            .border_color(theme::border_color())
+                            .border_color(theme.search_border)
                             .cursor_pointer()
                             .flex()
                             .items_center()
-                            .gap_2()
-                            .hover(|s| s.bg(theme::hover_fill()).border_color(theme::accent().opacity(0.4)))
+                            .justify_between()
+                            .hover(|s| s.opacity(0.9))
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.show_command_palette = true;
                                 this.command_palette_query.clear();
                                 this.command_palette_selected = 0;
                                 cx.notify();
                             }))
-                            .child(icon("search", 13.).text_color(theme::text_faint()))
                             .child(
                                 div()
-                                    .text_size(px(theme::TEXT_SMALL))
-                                    .text_color(theme::text_faint())
-                                    .child("Type a command or search..."),
+                                    .flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .child(theme::icon("search", 13.).text_color(theme.text_muted))
+                                    .child(
+                                        div()
+                                            .text_size(px(theme::TEXT_SMALL))
+                                            .text_color(theme.text_muted)
+                                            .child(if self.search_query.is_empty() { "Search".to_string() } else { self.search_query.clone() }),
+                                    ),
                             )
                             .child(
                                 div()
                                     .px_1p5()
                                     .py_0p5()
                                     .rounded(px(3.))
-                                    .bg(theme::shell_fill())
-                                    .border_1()
-                                    .border_color(theme::border_subtle())
+                                    .bg(if theme.is_dark { gpui::rgba(0xffffff15) } else { gpui::rgba(0x00000010) })
                                     .text_size(px(10.))
-                                    .text_color(theme::text_faint())
-                                    .child("Ctrl+K"),
+                                    .text_color(theme.text_faint)
+                                    .child("⌘K"),
                             ),
-                    )
-                    // Filter & Sort Button
-                    .child(
-                        icon_button("top-filter-btn", "filter", self.show_filter_menu || self.has_active_filters(), true)
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.show_filter_menu = !this.show_filter_menu;
-                                cx.notify();
-                            })),
-                    )
-                    // New Folder Button (+)
-                    .child(
-                        icon_button("new-folder-btn", "add-01", false, true)
-                            .on_click(cx.listener(|this, _, _, cx| this.create_new_folder(cx))),
-                    )
-                    // View Mode Switcher
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .bg(theme::card_fill())
-                            .rounded(px(RADIUS_ROW))
-                            .border_1()
-                            .border_color(theme::border_color())
-                            .p_0p5()
-                            .child(
-                                icon_button("view-grid", "grid", self.view_mode == ViewMode::Grid, true)
-                                    .on_click(cx.listener(|this, _, _, cx| this.set_view_mode(ViewMode::Grid, cx))),
-                            )
-                            .child(
-                                icon_button("view-list", "list", self.view_mode == ViewMode::List, true)
-                                    .on_click(cx.listener(|this, _, _, cx| this.set_view_mode(ViewMode::List, cx))),
-                            ),
-                    )
-                    // Settings Button
-                    .child(
-                        icon_button("top-settings", "settings", self.show_settings_modal, true)
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.show_settings_modal = !this.show_settings_modal;
-                                cx.notify();
-                            })),
-                    )
-                    // Inspector Toggle Button
-                    .child(
-                        icon_button("toggle-inspector", "eye", self.show_inspector, true)
-                            .on_click(cx.listener(|this, _, _, cx| this.toggle_inspector(cx))),
                     ),
             )
     }
@@ -712,16 +770,16 @@ impl MainWindow {
     fn render_breadcrumb(&self, cx: &mut Context<Self>) -> Div {
         if self.path_editing {
             return div()
-                .h(px(theme::PATH_BAR_HEIGHT))
-                .px_2()
-                .bg(theme::card_fill())
-                .rounded(px(RADIUS_ROW))
+                .h(px(theme::BUTTON_HEIGHT))
+                .px_2p5()
+                .bg(theme::glass_button_fill())
+                .rounded(px(theme::RADIUS_ROW))
                 .border_1()
-                .border_color(theme::accent())
+                .border_color(theme::accent().opacity(0.6))
                 .flex()
                 .items_center()
                 .gap_2()
-                .child(icon("hard-drive", 14.).text_color(theme::accent()))
+                .child(theme::icon("hard-drive", 14.).text_color(theme::accent()))
                 .child(
                     div()
                         .flex_1()
@@ -731,11 +789,11 @@ impl MainWindow {
                         .child(format!("{}|", self.path_input_text)),
                 )
                 .child(
-                    icon_button("path-commit-btn", "check-hi", false, true)
+                    theme::glass_icon_button("path-commit-btn", "check-hi", false, true)
                         .on_click(cx.listener(|this, _, _, cx| this.commit_path_input(cx))),
                 )
                 .child(
-                    icon_button("path-cancel-btn", "cancel-01", false, true)
+                    theme::glass_icon_button("path-cancel-btn", "cancel-01", false, true)
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.path_editing = false;
                             cx.notify();
@@ -763,12 +821,12 @@ impl MainWindow {
         let current_path = self.current_path.clone();
 
         div()
-            .h(px(theme::PATH_BAR_HEIGHT))
+            .h(px(theme::BUTTON_HEIGHT))
             .px_2()
-            .bg(theme::card_fill())
-            .rounded(px(RADIUS_ROW))
+            .bg(theme::glass_button_fill())
+            .rounded(px(theme::RADIUS_ROW))
             .border_1()
-            .border_color(theme::border_color())
+            .border_color(theme::glass_border())
             .flex()
             .items_center()
             .justify_between()
@@ -807,7 +865,7 @@ impl MainWindow {
 
                         let chevron = if !is_last {
                             Some(
-                                icon("chevron-right", 10.)
+                                theme::icon("chevron-right", 10.)
                                     .text_color(theme::text_faint())
                                     .into_any_element(),
                             )
@@ -819,7 +877,7 @@ impl MainWindow {
                     })),
             )
             .child(
-                icon_button("edit-path-btn", "pencil", false, true)
+                theme::glass_icon_button("edit-path-btn", "pencil", false, true)
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.path_editing = true;
                         this.search_active = false;
@@ -1406,13 +1464,13 @@ impl MainWindow {
             .into_any_element()
     }
 
-    fn render_active_filters_bar(&self, cx: &mut Context<Self>) -> Div {
+    fn render_active_filters_bar(&self, theme: &theme::ThemeColors, cx: &mut Context<Self>) -> Div {
         div()
             .h(px(28.))
             .px_3()
-            .bg(theme::shell_fill())
+            .bg(theme.topbar)
             .border_b_1()
-            .border_color(theme::border_subtle())
+            .border_color(theme.topbar_border)
             .flex()
             .items_center()
             .justify_between()
@@ -1424,7 +1482,7 @@ impl MainWindow {
                     .child(
                         div()
                             .text_size(px(11.))
-                            .text_color(theme::text_faint())
+                            .text_color(theme.text_faint)
                             .child("Active Filters:"),
                     )
                     .when(self.type_filter != TypeFilter::All, |d| {
@@ -1434,9 +1492,9 @@ impl MainWindow {
                                 .px_2()
                                 .py_0p5()
                                 .rounded(px(4.))
-                                .bg(theme::accent().opacity(0.15))
+                                .bg(theme.accent.opacity(0.15))
                                 .border_1()
-                                .border_color(theme::accent().opacity(0.3))
+                                .border_color(theme.accent.opacity(0.3))
                                 .flex()
                                 .items_center()
                                 .gap_1()
@@ -1449,7 +1507,7 @@ impl MainWindow {
                                 .child(
                                     div()
                                         .text_size(px(11.))
-                                        .text_color(theme::accent())
+                                        .text_color(theme.accent)
                                         .child(format!("{:?} ✕", self.type_filter)),
                                 ),
                         )
@@ -1461,9 +1519,9 @@ impl MainWindow {
                                 .px_2()
                                 .py_0p5()
                                 .rounded(px(4.))
-                                .bg(theme::accent().opacity(0.15))
+                                .bg(theme.accent.opacity(0.15))
                                 .border_1()
-                                .border_color(theme::accent().opacity(0.3))
+                                .border_color(theme.accent.opacity(0.3))
                                 .flex()
                                 .items_center()
                                 .gap_1()
@@ -1476,7 +1534,7 @@ impl MainWindow {
                                 .child(
                                     div()
                                         .text_size(px(11.))
-                                        .text_color(theme::accent())
+                                        .text_color(theme.accent)
                                         .child(format!("{:?} ✕", self.date_filter)),
                                 ),
                         )
@@ -1488,9 +1546,9 @@ impl MainWindow {
                                 .px_2()
                                 .py_0p5()
                                 .rounded(px(4.))
-                                .bg(theme::accent().opacity(0.15))
+                                .bg(theme.accent.opacity(0.15))
                                 .border_1()
-                                .border_color(theme::accent().opacity(0.3))
+                                .border_color(theme.accent.opacity(0.3))
                                 .flex()
                                 .items_center()
                                 .gap_1()
@@ -1503,7 +1561,7 @@ impl MainWindow {
                                 .child(
                                     div()
                                         .text_size(px(11.))
-                                        .text_color(theme::accent())
+                                        .text_color(theme.accent)
                                         .child(format!("{:?} ✕", self.size_filter)),
                                 ),
                         )
@@ -1710,6 +1768,30 @@ impl MainWindow {
                 shortcut: Some("Ctrl+R"),
                 action: PaletteAction::Refresh,
             },
+            PaletteItem {
+                section: "Commands",
+                title: "Theme: System (Auto)".to_string(),
+                subtitle: Some("Follow OS light/dark appearance".to_string()),
+                icon_name: "sliders",
+                shortcut: None,
+                action: PaletteAction::SetTheme(theme::ThemeMode::System),
+            },
+            PaletteItem {
+                section: "Commands",
+                title: "Theme: Light Mode".to_string(),
+                subtitle: Some("Switch to clean macOS light mode".to_string()),
+                icon_name: "palette",
+                shortcut: None,
+                action: PaletteAction::SetTheme(theme::ThemeMode::Light),
+            },
+            PaletteItem {
+                section: "Commands",
+                title: "Theme: Dark Mode".to_string(),
+                subtitle: Some("Switch to solid macOS dark mode".to_string()),
+                icon_name: "palette",
+                shortcut: None,
+                action: PaletteAction::SetTheme(theme::ThemeMode::Dark),
+            },
         ];
 
         let filters = vec![
@@ -1862,6 +1944,17 @@ impl MainWindow {
             }
             PaletteAction::ResetFilters => {
                 self.reset_filters(cx);
+            }
+            PaletteAction::SetTheme(mode) => {
+                self.theme_mode = mode;
+                let mut config = crate::config::Config::load();
+                config.theme = match mode {
+                    theme::ThemeMode::Light => "light",
+                    theme::ThemeMode::Dark => "dark",
+                    theme::ThemeMode::System => "system",
+                }.to_string();
+                config.save();
+                cx.notify();
             }
         }
     }
@@ -2369,10 +2462,65 @@ impl MainWindow {
             .into_any_element()
     }
 
-    fn render_sidebar(&self, cx: &mut Context<Self>) -> Div {
+    fn render_traffic_lights(&self, cx: &mut Context<Self>) -> Div {
+        div()
+            .h(px(TITLE_BAR_HEIGHT))
+            .px_4()
+            .flex()
+            .items_center()
+            .gap(px(8.))
+            .child(
+                div()
+                    .id("traffic-light-close")
+                    .size(px(12.))
+                    .rounded_full()
+                    .bg(theme::mac_close())
+                    .border_1()
+                    .border_color(gpui::rgba(0x00000040))
+                    .cursor_pointer()
+                    .hover(|s| s.opacity(0.85))
+                    .active(|s| s.opacity(0.7))
+                    .on_click(cx.listener(|_, _, window, _| {
+                        window.remove_window();
+                    })),
+            )
+            .child(
+                div()
+                    .id("traffic-light-minimize")
+                    .size(px(12.))
+                    .rounded_full()
+                    .bg(theme::mac_minimize())
+                    .border_1()
+                    .border_color(gpui::rgba(0x00000040))
+                    .cursor_pointer()
+                    .hover(|s| s.opacity(0.85))
+                    .active(|s| s.opacity(0.7))
+                    .on_click(cx.listener(|_, _, window, _| {
+                        window.minimize_window();
+                    })),
+            )
+            .child(
+                div()
+                    .id("traffic-light-zoom")
+                    .size(px(12.))
+                    .rounded_full()
+                    .bg(theme::mac_zoom())
+                    .border_1()
+                    .border_color(gpui::rgba(0x00000040))
+                    .cursor_pointer()
+                    .hover(|s| s.opacity(0.85))
+                    .active(|s| s.opacity(0.7))
+                    .on_click(cx.listener(|_, _, window, _| {
+                        window.zoom_window();
+                    })),
+            )
+    }
+
+    fn render_sidebar(&self, theme: &theme::ThemeColors, cx: &mut Context<Self>) -> Div {
         let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
-        let mut places = vec![
-            ("place-home", "Home", "home", home.clone()),
+        let favorites = vec![
+            ("place-recents", "Recents", "clock", home.clone()),
+            ("place-applications", "Applications", "app-window", PathBuf::from("/usr/share/applications")),
             ("place-desktop", "Desktop", "app-window", home.join("Desktop")),
             ("place-documents", "Documents", "document", home.join("Documents")),
             ("place-downloads", "Downloads", "download", home.join("Downloads")),
@@ -2381,46 +2529,83 @@ impl MainWindow {
             ("place-videos", "Videos", "video", home.join("Videos")),
         ];
 
+        let mut locations = vec![
+            ("loc-cloud", "iCloud Drive", "cloud", home.join("Documents")),
+            ("loc-user", "User Home", "user", home.clone()),
+            ("loc-root", "Macintosh HD", "hard-drive", PathBuf::from("/")),
+        ];
+
         if let Some(data_dir) = dirs::data_local_dir() {
-            places.push(("place-trash", "Trash", "trash", data_dir.join("Trash/files")));
+            locations.push(("place-trash", "Trash", "trash", data_dir.join("Trash/files")));
         }
 
-        let locations = vec![
-            ("loc-root", "File System", "hard-drive", PathBuf::from("/")),
+        let tags: Vec<(&'static str, &'static str, Hsla)> = vec![
+            ("tag-red", "Important", gpui::rgb(0xff453a).into()),
+            ("tag-orange", "Orange", gpui::rgb(0xff9f0a).into()),
+            ("tag-yellow", "Review", gpui::rgb(0xffd60a).into()),
+            ("tag-green", "Work", gpui::rgb(0x30d158).into()),
+            ("tag-blue", "Personal", gpui::rgb(0x0a84ff).into()),
+            ("tag-purple", "Ideas", gpui::rgb(0xbf5af2).into()),
         ];
 
         div()
-            .w(px(200.))
+            .w(px(220.))
             .h_full()
-            .bg(theme::sidebar_fill())
+            .bg(theme.sidebar)
             .border_r_1()
-            .border_color(theme::border_color())
-            .p_3()
+            .border_color(theme.sidebar_border)
+            .shadow(vec![
+                BoxShadow::new(
+                    px(4.),
+                    px(0.),
+                    gpui::hsla(0., 0., 0., if theme.is_dark { 0.35 } else { 0.08 }),
+                )
+                .blur_radius(px(12.))
+                .spread_radius(px(1.)),
+            ])
             .flex()
             .flex_col()
-            .child(self.render_sidebar_section("FAVORITES", places, cx))
-            .child(self.render_sidebar_section("LOCATIONS", locations, cx))
+            .flex_shrink_0()
+            .child(self.render_traffic_lights(cx))
+            .child(
+                div()
+                    .id("sidebar-sections-scroll")
+                    .flex_1()
+                    .overflow_y_scroll()
+                    .px_3()
+                    .py_2()
+                    .flex()
+                    .flex_col()
+                    .gap_3()
+                    .child(self.render_sidebar_section("Favorites", favorites, theme, cx))
+                    .child(self.render_sidebar_section("Locations", locations, theme, cx))
+                    .child(self.render_sidebar_tags_section("Tags", tags, theme, cx)),
+            )
     }
 
     fn render_sidebar_section(
         &self,
         title: &'static str,
         items: Vec<(&'static str, &'static str, &'static str, PathBuf)>,
+        theme: &theme::ThemeColors,
         cx: &mut Context<Self>,
     ) -> Div {
         div()
             .flex()
             .flex_col()
-            .gap_1()
-            .mb_4()
+            .gap_0p5()
             .child(
                 div()
-                    .px_3()
+                    .px_2()
                     .py_1()
-                    .text_size(px(theme::TEXT_CAPTION))
-                    .font_weight(gpui::FontWeight::BOLD)
-                    .text_color(theme::text_faint())
-                    .child(title),
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .text_size(px(11.))
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .text_color(theme.text_faint)
+                    .child(title)
+                    .child(theme::icon("chevron-down-hi", 10.).text_color(theme.text_faint)),
             )
             .children(items.into_iter().map(|(id, label, icon_name, path)| {
                 let is_active = self.current_path == path;
@@ -2428,48 +2613,135 @@ impl MainWindow {
 
                 div()
                     .id(ElementId::from(id))
-                    .h(px(SIDEBAR_ROW_HEIGHT))
-                    .px_3()
-                    .rounded(px(RADIUS_ROW))
+                    .h(px(30.))
+                    .px_2p5()
+                    .rounded(px(7.))
                     .flex()
                     .items_center()
                     .gap_2()
                     .cursor_pointer()
                     .when(is_active, |d| {
-                        d.bg(theme::selection_fill())
+                        d.bg(theme.selection)
                             .border_1()
-                            .border_color(theme::accent().opacity(0.4))
+                            .border_color(if theme.is_dark { gpui::rgba(0x0a84ff55) } else { gpui::rgba(0x007aff44) })
                     })
                     .when(!is_active, |d| {
-                        d.hover(|s| s.bg(theme::hover_fill()))
+                        d.hover(|s| s.bg(theme.button_hover))
                     })
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.navigate_to(target.clone(), cx);
                     }))
                     .child(
-                        icon(icon_name, 15.)
-                            .text_color(if is_active { theme::accent() } else { theme::text_muted() }),
+                        theme::icon(icon_name, 15.)
+                            .text_color(if is_active { theme.accent } else { theme.text_muted }),
                     )
                     .child(
                         div()
                             .text_size(px(theme::TEXT_BODY))
-                            .text_color(if is_active { theme::text_primary() } else { theme::text_muted() })
+                            .text_color(if is_active { theme.text_primary } else { theme.text_muted })
                             .font_weight(if is_active { gpui::FontWeight::SEMIBOLD } else { gpui::FontWeight::NORMAL })
                             .child(label),
                     )
             }))
     }
 
-    fn render_pane(&mut self, cx: &mut Context<Self>) -> AnyElement {
+    fn render_sidebar_tags_section(
+        &self,
+        title: &'static str,
+        tags: Vec<(&'static str, &'static str, Hsla)>,
+        theme: &theme::ThemeColors,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        div()
+            .flex()
+            .flex_col()
+            .gap_0p5()
+            .child(
+                div()
+                    .px_2()
+                    .py_1()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .text_size(px(11.))
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .text_color(theme.text_faint)
+                    .child(title)
+                    .child(theme::icon("chevron-down-hi", 10.).text_color(theme.text_faint)),
+            )
+            .children(tags.into_iter().map(|(id, label, color)| {
+                div()
+                    .id(ElementId::from(id))
+                    .h(px(28.))
+                    .px_2p5()
+                    .rounded(px(6.))
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .cursor_pointer()
+                    .hover(|s| s.bg(theme.button_hover))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.search_query = label.to_lowercase();
+                        this.sort_and_filter();
+                        cx.notify();
+                    }))
+                    .child(
+                        div()
+                            .size(px(10.))
+                            .rounded_full()
+                            .bg(color)
+                            .border_1()
+                            .border_color(gpui::rgba(0x00000022)),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(theme::TEXT_BODY))
+                            .text_color(theme.text_muted)
+                            .child(label),
+                    )
+            }))
+            .child(
+                div()
+                    .id("tag-all")
+                    .h(px(28.))
+                    .px_2p5()
+                    .rounded(px(6.))
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .cursor_pointer()
+                    .hover(|s| s.bg(theme.button_hover))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.search_query.clear();
+                        this.sort_and_filter();
+                        cx.notify();
+                    }))
+                    .child(
+                        div()
+                            .size(px(10.))
+                            .rounded_full()
+                            .border_1()
+                            .border_color(theme.text_faint),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(theme::TEXT_BODY))
+                            .text_color(theme.text_faint)
+                            .child("All Tags..."),
+                    ),
+            )
+    }
+
+    fn render_pane(&mut self, theme: &theme::ThemeColors, cx: &mut Context<Self>) -> AnyElement {
         if self.filtered_indices.is_empty() {
             return div()
                 .flex_1()
                 .h_full()
-                .bg(theme::pane_fill())
+                .bg(theme.pane)
                 .flex()
                 .items_center()
                 .justify_center()
-                .text_color(theme::text_faint())
+                .text_color(theme.text_faint)
                 .text_size(px(theme::TEXT_BODY))
                 .child("This folder is empty")
                 .into_any_element();
@@ -2480,14 +2752,14 @@ impl MainWindow {
                 let header_row = div()
                     .h(px(28.))
                     .px_3()
-                    .bg(theme::shell_fill())
+                    .bg(theme.topbar)
                     .border_b_1()
-                    .border_color(theme::border_subtle())
+                    .border_color(theme.topbar_border)
                     .flex()
                     .items_center()
                     .text_size(px(theme::TEXT_CAPTION))
                     .font_weight(gpui::FontWeight::BOLD)
-                    .text_color(theme::text_faint())
+                    .text_color(theme.text_faint)
                     .child(
                         div()
                             .id("col-header-name")
@@ -2496,7 +2768,7 @@ impl MainWindow {
                             .items_center()
                             .gap_1()
                             .cursor_pointer()
-                            .hover(|s| s.text_color(theme::text_primary()))
+                            .hover(|s| s.text_color(theme.text_primary))
                             .on_click(cx.listener(|this, _, _, cx| this.toggle_sort(SortBy::Name, cx)))
                             .child("NAME")
                             .when(self.sort_by == SortBy::Name, |d| {
@@ -2509,7 +2781,7 @@ impl MainWindow {
                             .w(px(100.))
                             .text_right()
                             .cursor_pointer()
-                            .hover(|s| s.text_color(theme::text_primary()))
+                            .hover(|s| s.text_color(theme.text_primary))
                             .on_click(cx.listener(|this, _, _, cx| this.toggle_sort(SortBy::Size, cx)))
                             .child("SIZE"),
                     )
@@ -2519,7 +2791,7 @@ impl MainWindow {
                             .w(px(130.))
                             .px_2()
                             .cursor_pointer()
-                            .hover(|s| s.text_color(theme::text_primary()))
+                            .hover(|s| s.text_color(theme.text_primary))
                             .on_click(cx.listener(|this, _, _, cx| this.toggle_sort(SortBy::Type, cx)))
                             .child("TYPE"),
                     )
@@ -2528,7 +2800,7 @@ impl MainWindow {
                             .id("col-header-modified")
                             .w(px(140.))
                             .cursor_pointer()
-                            .hover(|s| s.text_color(theme::text_primary()))
+                            .hover(|s| s.text_color(theme.text_primary))
                             .on_click(cx.listener(|this, _, _, cx| this.toggle_sort(SortBy::Modified, cx)))
                             .child("MODIFIED"),
                     );
@@ -2547,7 +2819,7 @@ impl MainWindow {
                     .min_w_0()
                     .min_h_0()
                     .h_full()
-                    .bg(theme::pane_fill())
+                    .bg(theme.pane)
                     .relative()
                     .flex()
                     .flex_col()
@@ -2567,14 +2839,15 @@ impl MainWindow {
                 )
                 .track_scroll(&self.scroll_handle)
                 .size_full()
-                .p_2();
+                .min_h_0()
+                .p_3();
 
                 div()
                     .flex_1()
                     .min_w_0()
                     .min_h_0()
                     .h_full()
-                    .bg(theme::pane_fill())
+                    .bg(theme.pane)
                     .relative()
                     .flex()
                     .flex_col()
@@ -2591,6 +2864,7 @@ impl MainWindow {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
+        let theme = self.active_theme;
         range
             .map(|i| {
                 let entry = &self.entries[self.filtered_indices[i]];
@@ -2610,12 +2884,12 @@ impl MainWindow {
                     .items_center()
                     .cursor_pointer()
                     .when(is_selected, |d| {
-                        d.bg(theme::selection_fill())
+                        d.bg(theme.selection)
                             .border_1()
-                            .border_color(theme::accent().opacity(0.4))
+                            .border_color(theme.accent)
                     })
                     .when(!is_selected, |d| {
-                        d.hover(|s| s.bg(theme::hover_fill()))
+                        d.hover(|s| s.bg(theme.card_hover))
                     })
                     .on_click(cx.listener(move |this, ev: &ClickEvent, _, cx| {
                         if ev.click_count() >= 2 {
@@ -2654,9 +2928,9 @@ impl MainWindow {
                                 div()
                                     .text_size(px(theme::TEXT_BODY))
                                     .text_color(if is_selected {
-                                        theme::text_primary()
+                                        theme.text_primary
                                     } else {
-                                        theme::content(0.9)
+                                        theme.text_primary
                                     })
                                     .font_weight(if entry.is_directory {
                                         gpui::FontWeight::SEMIBOLD
@@ -2673,7 +2947,7 @@ impl MainWindow {
                             .w(px(100.))
                             .text_right()
                             .text_size(px(theme::TEXT_SMALL))
-                            .text_color(theme::text_muted())
+                            .text_color(theme.text_muted)
                             .child(entry.formatted_size()),
                     )
                     // Type
@@ -2682,7 +2956,7 @@ impl MainWindow {
                             .w(px(130.))
                             .px_2()
                             .text_size(px(theme::TEXT_SMALL))
-                            .text_color(theme::text_faint())
+                            .text_color(theme.text_faint)
                             .overflow_hidden()
                             .child(entry.type_description()),
                     )
@@ -2691,7 +2965,7 @@ impl MainWindow {
                         div()
                             .w(px(140.))
                             .text_size(px(theme::TEXT_SMALL))
-                            .text_color(theme::text_muted())
+                            .text_color(theme.text_muted)
                             .child(entry.formatted_modified()),
                     )
                     .into_any_element()
@@ -2705,6 +2979,7 @@ impl MainWindow {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
+        let theme = self.active_theme;
         let cols = self.grid_cols.max(1);
         let card_width = self.zoom;
         let card_height = card_width + 36.;
@@ -2734,16 +3009,16 @@ impl MainWindow {
                             .h(px(card_height))
                             .p_2()
                             .rounded(px(RADIUS_ROW))
-                            .bg(if is_selected { theme::selection_fill() } else { theme::card_fill() })
+                            .bg(if is_selected { theme.selection } else { theme.card })
                             .border_1()
-                            .border_color(if is_selected { theme::accent() } else { theme::border_color() })
+                            .border_color(if is_selected { theme.accent } else { theme.card_border })
                             .cursor_pointer()
                             .flex()
                             .flex_col()
                             .items_center()
                             .justify_between()
                             .when(!is_selected, |d| {
-                                d.hover(|s| s.bg(theme::hover_fill()).border_color(theme::border_subtle()))
+                                d.hover(|s| s.bg(theme.card_hover))
                             })
                             .on_click(cx.listener(move |this, ev: &ClickEvent, _, cx| {
                                 if ev.click_count() >= 2 {
@@ -2816,11 +3091,7 @@ impl MainWindow {
                                     .child(
                                         div()
                                             .text_size(px(theme::TEXT_SMALL))
-                                            .text_color(if is_selected {
-                                                theme::text_primary()
-                                            } else {
-                                                theme::content(0.9)
-                                            })
+                                            .text_color(theme.text_primary)
                                             .font_weight(if entry.is_directory {
                                                 gpui::FontWeight::SEMIBOLD
                                             } else {
@@ -2833,7 +3104,7 @@ impl MainWindow {
                                     .child(
                                         div()
                                             .text_size(px(theme::TEXT_CAPTION))
-                                            .text_color(theme::text_faint())
+                                            .text_color(theme.text_faint)
                                             .child(entry.formatted_size()),
                                     ),
                             )
@@ -2844,15 +3115,15 @@ impl MainWindow {
             .collect()
     }
 
-    fn render_inspector(&self, cx: &mut Context<Self>) -> Div {
+    fn render_inspector(&self, theme: &theme::ThemeColors, cx: &mut Context<Self>) -> Div {
         let selected_entry = self.selected_index.and_then(|i| self.entry_at(i));
 
         div()
             .w(px(270.))
             .h_full()
-            .bg(theme::sidebar_fill())
+            .bg(theme.sidebar)
             .border_l_1()
-            .border_color(theme::border_color())
+            .border_color(theme.sidebar_border)
             .p_4()
             .flex()
             .flex_col()
@@ -2866,28 +3137,28 @@ impl MainWindow {
                         div()
                             .text_size(px(theme::TEXT_HEADER))
                             .font_weight(gpui::FontWeight::BOLD)
-                            .text_color(theme::text_primary())
+                            .text_color(theme.text_primary)
                             .child("Properties"),
                     )
-                    .child(icon("sliders", 14.).text_color(theme::text_faint())),
+                    .child(icon("sliders", 14.).text_color(theme.text_faint)),
             )
             .child(match selected_entry {
-                Some(entry) => self.render_inspector_file(entry, cx).into_any_element(),
-                None => self.render_inspector_folder(cx).into_any_element(),
+                Some(entry) => self.render_inspector_file(entry, theme, cx).into_any_element(),
+                None => self.render_inspector_folder(theme, cx).into_any_element(),
             })
     }
 
-    fn render_inspector_file(&self, entry: &FileEntry, cx: &mut Context<Self>) -> Div {
+    fn render_inspector_file(&self, entry: &FileEntry, theme: &theme::ThemeColors, cx: &mut Context<Self>) -> Div {
         let path = entry.path.clone();
         let thumb_path = self.thumbnails.get_thumbnail_path(&entry.path, entry.content_type, entry.size);
 
         let preview_box = div()
             .w_full()
             .h(px(140.))
-            .bg(theme::card_fill())
+            .bg(theme.card)
             .rounded(px(RADIUS_CARD))
             .border_1()
-            .border_color(theme::border_color())
+            .border_color(theme.card_border)
             .flex()
             .items_center()
             .justify_center()
@@ -2905,7 +3176,7 @@ impl MainWindow {
                             .into_any_element()
                     } else {
                         icon(entry.icon_name, 64.)
-                            .text_color(theme::text_muted())
+                            .text_color(theme.text_muted)
                             .into_any_element()
                     }
                 },
@@ -2914,18 +3185,18 @@ impl MainWindow {
         let file_name = div()
             .text_size(px(theme::TEXT_TITLE))
             .font_weight(gpui::FontWeight::BOLD)
-            .text_color(theme::text_primary())
+            .text_color(theme.text_primary)
             .child(entry.name.clone());
 
         let meta_list = div()
             .flex()
             .flex_col()
             .gap_2()
-            .child(Self::meta_row("Size", &entry.formatted_size()))
-            .child(Self::meta_row("Type", &entry.type_description()))
-            .child(Self::meta_row("Modified", &entry.formatted_modified()))
-            .child(Self::meta_row("Permissions", &entry.formatted_permissions()))
-            .child(Self::meta_row("Location", &entry.path.parent().unwrap_or(&entry.path).to_string_lossy()));
+            .child(Self::meta_row("Size", &entry.formatted_size(), theme))
+            .child(Self::meta_row("Type", &entry.type_description(), theme))
+            .child(Self::meta_row("Modified", &entry.formatted_modified(), theme))
+            .child(Self::meta_row("Permissions", &entry.formatted_permissions(), theme))
+            .child(Self::meta_row("Location", &entry.path.parent().unwrap_or(&entry.path).to_string_lossy(), theme));
 
         let target_file = path.clone();
         let target_term = path.clone();
@@ -2963,7 +3234,7 @@ impl MainWindow {
             .child(actions)
     }
 
-    fn render_inspector_folder(&self, cx: &mut Context<Self>) -> Div {
+    fn render_inspector_folder(&self, theme: &theme::ThemeColors, cx: &mut Context<Self>) -> Div {
         let name = self.current_path
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
@@ -2981,10 +3252,10 @@ impl MainWindow {
                 div()
                     .w_full()
                     .h(px(140.))
-                    .bg(theme::card_fill())
+                    .bg(theme.card)
                     .rounded(px(RADIUS_CARD))
                     .border_1()
-                    .border_color(theme::border_color())
+                    .border_color(theme.card_border)
                     .flex()
                     .items_center()
                     .justify_center()
@@ -2994,7 +3265,7 @@ impl MainWindow {
                 div()
                     .text_size(px(theme::TEXT_TITLE))
                     .font_weight(gpui::FontWeight::BOLD)
-                    .text_color(theme::text_primary())
+                    .text_color(theme.text_primary)
                     .child(name),
             )
             .child(
@@ -3002,9 +3273,9 @@ impl MainWindow {
                     .flex()
                     .flex_col()
                     .gap_2()
-                    .child(Self::meta_row("Type", "Directory"))
-                    .child(Self::meta_row("Disk Free", &format!("{} free", free_space)))
-                    .child(Self::meta_row("Path", &self.current_path.to_string_lossy())),
+                    .child(Self::meta_row("Type", "Directory", theme))
+                    .child(Self::meta_row("Disk Free", &format!("{} free", free_space), theme))
+                    .child(Self::meta_row("Path", &self.current_path.to_string_lossy(), theme)),
             )
             .child(
                 div()
@@ -3020,7 +3291,7 @@ impl MainWindow {
             )
     }
 
-    fn meta_row(label: &'static str, value: &str) -> Div {
+    fn meta_row(label: &'static str, value: &str, theme: &theme::ThemeColors) -> Div {
         div()
             .flex()
             .justify_between()
@@ -3028,12 +3299,12 @@ impl MainWindow {
             .text_size(px(theme::TEXT_SMALL))
             .child(
                 div()
-                    .text_color(theme::text_faint())
+                    .text_color(theme.text_faint)
                     .child(label),
             )
             .child(
                 div()
-                    .text_color(theme::text_primary())
+                    .text_color(theme.text_primary)
                     .max_w(px(160.))
                     .overflow_hidden()
                     .child(value.to_string()),
@@ -3043,6 +3314,8 @@ impl MainWindow {
 
 impl Render for MainWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.active_theme = theme::ThemeColors::resolve(self.theme_mode, window);
+        let theme = self.active_theme;
         let total_items = self.filtered_indices.len();
         let selected_size = self.selected_index.and_then(|idx| self.entry_at(idx)).map(|e| e.formatted_size());
         let free_space = crate::utils::get_disk_free_space(&self.current_path).unwrap_or_else(|| "0 GB".to_string());
@@ -3059,27 +3332,27 @@ impl Render for MainWindow {
         let cols = ((pane_width + gap) / (card_width + gap)).floor().max(1.0) as usize;
         self.grid_cols = cols;
 
-        let toolbar = self.render_header(cx);
-        let sidebar = self.render_sidebar(cx);
+        let toolbar = self.render_header(&theme, cx);
+        let sidebar = self.render_sidebar(&theme, cx);
         let inspector = if self.show_inspector {
-            Some(self.render_inspector(cx))
+            Some(self.render_inspector(&theme, cx))
         } else {
             None
         };
-        let pane = self.render_pane(cx);
+        let pane = self.render_pane(&theme, cx);
 
         // Bottom Status Bar
         let status_bar = div()
             .h(px(24.))
             .px_3()
-            .bg(theme::shell_fill())
+            .bg(theme.topbar)
             .border_t_1()
-            .border_color(theme::border_subtle())
+            .border_color(theme.topbar_border)
             .flex()
             .items_center()
             .justify_between()
             .text_size(px(theme::TEXT_CAPTION))
-            .text_color(theme::text_faint())
+            .text_color(theme.text_faint)
             .child(format!(
                 "{} items{}",
                 total_items,
@@ -3096,9 +3369,9 @@ impl Render for MainWindow {
             .id("shark-window-root")
             .track_focus(&focus_handle)
             .size_full()
-            .bg(theme::shell_fill())
+            .bg(theme.canvas)
             .flex()
-            .flex_col()
+            .flex_row()
             .overflow_hidden()
             .on_scroll_wheel(cx.listener(|this, ev: &ScrollWheelEvent, _, cx| {
                 if ev.modifiers.control {
@@ -3292,20 +3565,34 @@ impl Render for MainWindow {
                     }
                 }
             }))
-            .child(toolbar)
-            .when(self.has_active_filters(), |d| {
-                d.child(self.render_active_filters_bar(cx))
-            })
+            .child(sidebar)
             .child(
                 div()
-                    .flex_1()
                     .flex()
+                    .flex_col()
+                    .flex_1()
+                    .h_full()
+                    .min_h_0()
+                    .bg(theme.pane)
                     .overflow_hidden()
-                    .child(sidebar)
-                    .child(pane)
-                    .children(inspector),
+                    .child(toolbar)
+                    .when(self.has_active_filters(), |d| {
+                        d.child(self.render_active_filters_bar(&theme, cx))
+                    })
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .flex_1()
+                            .h_full()
+                            .min_h_0()
+                            .bg(theme.pane)
+                            .overflow_hidden()
+                            .child(pane)
+                            .children(inspector),
+                    )
+                    .child(status_bar),
             )
-            .child(status_bar)
             .when(self.show_filter_menu, |d| {
                 d.child(self.render_filter_popover(cx))
             })

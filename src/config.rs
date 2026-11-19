@@ -26,10 +26,17 @@ pub struct Config {
     /// Background opacity mode: "solid" (plain simple background) or "glass" (translucent acrylic/glass)
     #[serde(default = "default_background_mode")]
     pub background_mode: String,
+    /// Theme appearance mode: "system", "light", "dark"
+    #[serde(default = "default_theme")]
+    pub theme: String,
 }
 
 fn default_background_mode() -> String {
     "solid".to_string()
+}
+
+fn default_theme() -> String {
+    "system".to_string()
 }
 
 impl Default for Config {
@@ -56,6 +63,7 @@ impl Default for Config {
             window_width: 1024,
             window_height: 700,
             background_mode: "solid".to_string(),
+            theme: "system".to_string(),
         }
     }
 }
