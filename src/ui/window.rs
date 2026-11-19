@@ -1,0 +1,3312 @@
+//! Main application window layout and controller for Shark GPUI.
+
+use crate::filesystem::DirectoryCache;
+use crate::filesystem::operations::{open_in_terminal, open_path};
+use crate::filesystem::scanner::{scan_directory_async, ScanMessage};
+use crate::models::file_entry::FileEntry;
+use crate::navigation::history::NavigationHistory;
+use crate::theme::{self, button, icon, icon_button, ButtonLook, RADIUS_CARD, RADIUS_ROW, RADIUS_THUMB, SIDEBAR_ROW_HEIGHT, TITLE_BAR_HEIGHT};
+use crate::thumbnails::ThumbnailCache;
+use gpui::{
+    actions, div, img, prelude::*, px, uniform_list, AnyElement, ClickEvent, Context,
+    Div, ElementId, FocusHandle, IntoElement, KeyDownEvent, Render, ScrollWheelEvent,
+    UniformListScrollHandle, Window,
+};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{channel, Receiver};
+use std::sync::Arc;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ViewMode {
+    Grid,
+    List,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum SortBy {
+    Name,
+    Size,
+    Modified,
+    Type,
+}
+
+actions!(
+    shark,
+    [
+        Back,
+        Forward,
+        Up,
+        ToggleInspector,
+        ToggleViewMode,
+        ZoomIn,
+        ZoomOut,
+        SelectNext,
+        SelectPrev,
+        OpenSelected,
+    ]
+);
+
+#[derive(Clone, Debug)]
+pub struct PaletteItem {
+    pub section: &'static str,
+    pub title: String,
+    pub subtitle: Option<String>,
+    pub icon_name: &'static str,
+    pub shortcut: Option<&'static str>,
+    pub action: PaletteAction,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TypeFilter {
+    All,
+    Folders,
+    Documents,
+    Images,
+    Media,
+    Code,
+    Archives,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DateFilter {
+    Any,
+    Today,
+    Last7Days,
+    Last30Days,
+    ThisYear,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SizeFilter {
+    Any,
+    Small,  // < 1 MB
+    Medium, // 1 MB - 100 MB
+    Large,  // > 100 MB
+}
+
+#[derive(Clone, Debug)]
+pub enum PaletteAction {
+    Navigate(PathBuf),
+    NewFolder,
+    ToggleViewMode,
+    ToggleHidden,
+    ToggleInspector,
+    OpenTerminal,
+    OpenSettings,
+    Refresh,
+    OpenFile(PathBuf),
+    SetTypeFilter(TypeFilter),
+    SetDateFilter(DateFilter),
+    SetSizeFilter(SizeFilter),
+    ResetFilters,
+}
+
+pub struct MainWindow {
+    pub current_path: PathBuf,
+    pub history: NavigationHistory,
+    pub entries: Vec<FileEntry>,
+    pub filtered_indices: Vec<usize>,
+    pub search_query: String,
+    pub selected_index: Option<usize>,
+    pub view_mode: ViewMode,
+    pub sort_by: SortBy,
+    pub sort_reversed: bool,
+    pub sort_folders_first: bool,
+    pub type_filter: TypeFilter,
+    pub date_filter: DateFilter,
+    pub size_filter: SizeFilter,
+    pub     pub enable_thumbnails: bool,
+    pub confirm_delete: bool,
+    pub show_inspector: bool,
+    pub zoom: f32,
+    pub scroll_handle: UniformListScrollHandle,
+    pub thumbnails: ThumbnailCache,
+    pub dir_cache: DirectoryCache,
+    pub scan_cancellable: Arc<AtomicBool>,
+    pub scan_receiver: Option<Receiver<ScanMessage>>,
+    pub total_items: usize,
+    pub total_bytes: u64,
+    pub focus_handle: FocusHandle,
+    pub grid_cols: usize,
+    pub show_hidden: bool,
+    pub show_settings_modal: bool,
+    pub show_command_palette: bool,
+    pub command_palette_query: String,
+    pub command_palette_selected: usize,
+    pub search_active: bool,
+    pub path_editing: bool,
+    pub path_input_text: String,
+}
+
+impl MainWindow {
+    pub fn new(initial_path: PathBuf, cx: &mut Context<Self>) -> Self {
+        let cancellable = Arc::new(AtomicBool::new(false));
+        let history = NavigationHistory::new(initial_path.clone());
+        let dir_cache = DirectoryCache::new();
+        dir_cache.warm_favorites();
+
+        let thumbnails = ThumbnailCache::new();
+        let thumb_rx = thumbnails.ready_receiver();
+
+        // Listen for completed background thumbnails to re-render rows smoothly
+        cx.spawn(async move |this, cx| {
+            while let Ok(_) = thumb_rx.recv().await {
+                let _ = this.update(cx, |_, cx| {
+                    cx.notify();
+                });
+            }
+        })
+        .detach();
+
+        let mut win = Self {
+            current_path: initial_path.clone(),
+            history,
+            entries: Vec::new(),
+            filtered_indices: Vec::new(),
+            search_query: String::new(),
+            selected_index: None,
+            view_mode: ViewMode::Grid,
+            sort_by: SortBy::Name,
+            sort_reversed: false,
+            sort_folders_first: true,
+            type_filter: TypeFilter::All,
+            date_filter: DateFilter::Any,
+            size_filter: SizeFilter::Any,
+            show_filter_menu: false,
+            enable_thumbnails: true,
+            confirm_delete: true,
+            show_inspector: true,
+            zoom: 110.,
+            scroll_handle: UniformListScrollHandle::new(),
+            thumbnails,
+            dir_cache,
+            scan_cancellable: cancellable,
+            scan_receiver: None,
+            total_items: 0,
+            total_bytes: 0,
+            focus_handle: cx.focus_handle(),
+            grid_cols: 8,
+            show_hidden: false,
+            show_settings_modal: false,
+            show_command_palette: false,
+            command_palette_query: String::new(),
+            command_palette_selected: 0,
+            search_active: false,
+            path_editing: false,
+            path_input_text: String::new(),
+        };
+
+        win.navigate_to(initial_path, cx);
+        win
+    }
+
+    #[inline]
+    pub fn entry_at(&self, idx: usize) -> Option<&FileEntry> {
+        self.filtered_indices.get(idx).and_then(|&i| self.entries.get(i))
+    }
+
+    #[inline]
+    pub fn filtered_count(&self) -> usize {
+        self.filtered_indices.len()
+    }
+
+    /// Navigate to a new directory path and start scanning.
+    pub fn navigate_to(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        // Cancel any active directory scanner
+        self.scan_cancellable.store(true, Ordering::Relaxed);
+        let new_cancellable = Arc::new(AtomicBool::new(false));
+        self.scan_cancellable = new_cancellable.clone();
+
+        self.history.navigate_to(path.clone());
+        self.current_path = path.clone();
+        self.selected_index = None;
+        self.search_query.clear();
+
+        // 1. Instant zero-latency display from DirectoryCache (KDE Dolphin / GNOME Files style)
+        if let Some(cached) = self.dir_cache.get(&path) {
+            self.entries = (*cached.entries).clone();
+            self.total_items = cached.total_items;
+            self.total_bytes = cached.total_bytes;
+            self.sort_and_filter();
+            cx.notify();
+
+            // If the folder on disk hasn't modified, we're completely done in 0ms!
+            if self.dir_cache.is_fresh(&path) {
+                return;
+            }
+        } else {
+            // Uncached directory: reset entries to receive progressive stream
+            self.entries.clear();
+            self.filtered_indices.clear();
+            self.total_items = 0;
+            self.total_bytes = 0;
+            cx.notify();
+        }
+
+        let (sender, receiver) = channel();
+        self.scan_receiver = Some(receiver);
+
+        // High-speed POSIX getdents64 background scanner
+        scan_directory_async(path, new_cancellable, sender);
+
+        // Start async task to receive batches reactively
+        self.poll_scanner(cx);
+    }
+
+    fn poll_scanner(&mut self, cx: &mut Context<Self>) {
+        let cancellable = self.scan_cancellable.clone();
+
+        cx.spawn(async move |this, cx| {
+            loop {
+                if cancellable.load(Ordering::Relaxed) {
+                    break;
+                }
+
+                // Check messages from scanner
+                let mut batches = Vec::new();
+                let mut completed = None;
+
+                let should_continue = this.update(cx, |win, _| {
+                    if let Some(ref rx) = win.scan_receiver {
+                        while let Ok(msg) = rx.try_recv() {
+                            match msg {
+                                ScanMessage::Batch(batch) => batches.push(batch),
+                                ScanMessage::Completed { total_items, total_bytes } => {
+                                    completed = Some((total_items, total_bytes));
+                                }
+                                ScanMessage::Error(_) => {}
+                            }
+                        }
+                    }
+                    !cancellable.load(Ordering::Relaxed)
+                });
+
+                if should_continue.is_err() || !should_continue.unwrap() {
+                    break;
+                }
+
+                if !batches.is_empty() || completed.is_some() {
+                    let _ = this.update(cx, |win, cx| {
+                        for batch in batches {
+                            win.entries.extend(batch);
+                        }
+                        if let Some((items, bytes)) = completed {
+                            win.total_items = items;
+                            win.total_bytes = bytes;
+                            // Update directory cache
+                            win.dir_cache.insert(
+                                win.current_path.clone(),
+                                win.entries.clone(),
+                                items,
+                                bytes,
+                            );
+                        }
+                        win.sort_and_filter();
+                        cx.notify();
+                    });
+                }
+
+                if completed.is_some() {
+                    break;
+                }
+
+                // Smooth 8ms polling during scanning
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(8))
+                    .await;
+            }
+        })
+        .detach();
+    }
+
+    pub fn has_active_filters(&self) -> bool {
+        self.type_filter != TypeFilter::All
+            || self.date_filter != DateFilter::Any
+            || self.size_filter != SizeFilter::Any
+    }
+
+    pub fn reset_filters(&mut self, cx: &mut Context<Self>) {
+        self.type_filter = TypeFilter::All;
+        self.date_filter = DateFilter::Any;
+        self.size_filter = SizeFilter::Any;
+        self.sort_and_filter();
+        cx.notify();
+    }
+
+    /// Sort and filter entries in-place using zero-allocation index mapping.
+    pub fn sort_and_filter(&mut self) {
+        let sort_by = self.sort_by;
+        let reversed = self.sort_reversed;
+        let q = self.search_query.trim().to_lowercase();
+        let show_hidden = self.show_hidden;
+        let type_filter = self.type_filter;
+        let date_filter = self.date_filter;
+        let size_filter = self.size_filter;
+
+        self.filtered_indices.clear();
+        for (i, e) in self.entries.iter().enumerate() {
+            if !show_hidden && e.is_hidden {
+                continue;
+            }
+            if !q.is_empty() && !e.name_lower.contains(&q) {
+                continue;
+            }
+
+            // Type filter
+            match type_filter {
+                TypeFilter::All => {}
+                TypeFilter::Folders => {
+                    if !e.is_directory { continue; }
+                }
+                TypeFilter::Documents => {
+                    if e.is_directory || (!e.content_type.starts_with("text/") && e.content_type != "application/pdf") {
+                        continue;
+                    }
+                }
+                TypeFilter::Images => {
+                    if e.is_directory || !e.content_type.starts_with("image/") {
+                        continue;
+                    }
+                }
+                TypeFilter::Media => {
+                    if e.is_directory || (!e.content_type.starts_with("video/") && !e.content_type.starts_with("audio/")) {
+                        continue;
+                    }
+                }
+                TypeFilter::Code => {
+                    if e.is_directory || (!e.content_type.starts_with("text/x-")
+                        && !e.content_type.contains("javascript")
+                        && !e.content_type.contains("json")
+                        && !e.content_type.contains("toml")
+                        && !e.content_type.contains("yaml")
+                        && e.content_type != "text/html")
+                    {
+                        continue;
+                    }
+                }
+                TypeFilter::Archives => {
+                    if e.is_directory || (!e.content_type.contains("archive") && !e.content_type.contains("zip") && !e.content_type.contains("tar")) {
+                        continue;
+                    }
+                }
+            }
+
+            // Size filter
+            match size_filter {
+                SizeFilter::Any => {}
+                SizeFilter::Small => {
+                    if e.is_directory || e.size >= 1024 * 1024 { continue; }
+                }
+                SizeFilter::Medium => {
+                    if e.is_directory || e.size < 1024 * 1024 || e.size > 100 * 1024 * 1024 { continue; }
+                }
+                SizeFilter::Large => {
+                    if e.is_directory || e.size <= 100 * 1024 * 1024 { continue; }
+                }
+            }
+
+            // Date Modified filter
+            if date_filter != DateFilter::Any {
+                if let Some(mod_time) = e.modified {
+                    if let Ok(elapsed) = mod_time.elapsed() {
+                        let secs = elapsed.as_secs();
+                        let pass = match date_filter {
+                            DateFilter::Any => true,
+                            DateFilter::Today => secs <= 86400,
+                            DateFilter::Last7Days => secs <= 7 * 86400,
+                            DateFilter::Last30Days => secs <= 30 * 86400,
+                            DateFilter::ThisYear => secs <= 365 * 86400,
+                        };
+                        if !pass { continue; }
+                    } else {
+                        continue;
+                    }
+                } else {
+                    continue;
+                }
+            }
+
+            self.filtered_indices.push(i);
+        }
+
+        // Sort indices by referencing entries directly (ZERO CLONING)
+        let entries = &self.entries;
+        let sort_folders_first = self.sort_folders_first;
+
+        self.filtered_indices.sort_by(|&a_idx, &b_idx| {
+            let a = &entries[a_idx];
+            let b = &entries[b_idx];
+
+            if sort_folders_first && a.is_directory != b.is_directory {
+                return b.is_directory.cmp(&a.is_directory);
+            }
+
+            let cmp = match sort_by {
+                SortBy::Name => a.name_lower.cmp(&b.name_lower),
+                SortBy::Size => a.size.cmp(&b.size),
+                SortBy::Modified => a.modified.cmp(&b.modified),
+                SortBy::Type => a.content_type.cmp(b.content_type),
+            };
+
+            if reversed {
+                cmp.reverse()
+            } else {
+                cmp
+            }
+        });
+    }
+
+    pub fn commit_path_input(&mut self, cx: &mut Context<Self>) {
+        let raw = self.path_input_text.trim();
+        let expanded = if raw.starts_with("~/") || raw == "~" {
+            if let Some(home) = dirs::home_dir() {
+                if raw == "~" {
+                    home
+                } else {
+                    home.join(&raw[2..])
+                }
+            } else {
+                PathBuf::from(raw)
+            }
+        } else {
+            PathBuf::from(raw)
+        };
+
+        if expanded.exists() {
+            if expanded.is_dir() {
+                self.navigate_to(expanded, cx);
+            } else {
+                open_path(&expanded);
+            }
+        }
+        self.path_editing = false;
+        cx.notify();
+    }
+
+    pub fn create_new_folder(&mut self, cx: &mut Context<Self>) {
+        use crate::filesystem::operations::get_unique_path;
+        let target = get_unique_path(&self.current_path, "New Folder");
+        let name = target.file_name().unwrap().to_string_lossy().to_string();
+
+        if crate::filesystem::operations::create_folder(&self.current_path, &name).is_ok() {
+            self.dir_cache.invalidate(&self.current_path);
+            self.refresh(cx);
+        }
+    }
+
+    pub fn refresh(&mut self, cx: &mut Context<Self>) {
+        self.dir_cache.invalidate(&self.current_path);
+        self.navigate_to(self.current_path.clone(), cx);
+    }
+
+    pub fn open_selected(&mut self, cx: &mut Context<Self>) {
+        if let Some(idx) = self.selected_index {
+            if let Some(entry) = self.entry_at(idx) {
+                if entry.is_directory {
+                    let target = entry.path.clone();
+                    self.navigate_to(target, cx);
+                } else {
+                    open_path(&entry.path);
+                }
+            }
+        }
+    }
+
+    pub fn go_back(&mut self, cx: &mut Context<Self>) {
+        if self.history.can_go_back() {
+            if let Some(prev) = self.history.go_back() {
+                self.navigate_to(prev, cx);
+            }
+        }
+    }
+
+    pub fn go_forward(&mut self, cx: &mut Context<Self>) {
+        if self.history.can_go_forward() {
+            if let Some(next) = self.history.go_forward() {
+                self.navigate_to(next, cx);
+            }
+        }
+    }
+
+    pub fn go_up(&mut self, cx: &mut Context<Self>) {
+        if let Some(parent) = self.current_path.parent().map(Path::to_path_buf) {
+            self.navigate_to(parent, cx);
+        }
+    }
+
+    pub fn set_view_mode(&mut self, mode: ViewMode, cx: &mut Context<Self>) {
+        self.view_mode = mode;
+        cx.notify();
+    }
+
+    pub fn toggle_inspector(&mut self, cx: &mut Context<Self>) {
+        self.show_inspector = !self.show_inspector;
+        cx.notify();
+    }
+
+    pub fn toggle_sort(&mut self, column: SortBy, cx: &mut Context<Self>) {
+        if self.sort_by == column {
+            self.sort_reversed = !self.sort_reversed;
+        } else {
+            self.sort_by = column;
+            self.sort_reversed = false;
+        }
+        self.sort_and_filter();
+        cx.notify();
+    }
+
+    pub fn zoom_in(&mut self, cx: &mut Context<Self>) {
+        self.zoom = (self.zoom + 15.).min(180.);
+        cx.notify();
+    }
+
+    pub fn zoom_out(&mut self, cx: &mut Context<Self>) {
+        self.zoom = (self.zoom - 15.).max(80.);
+        cx.notify();
+    }
+
+    // --- Sub-renderers ---
+
+    fn render_header(&self, cx: &mut Context<Self>) -> Div {
+        let can_back = self.history.can_go_back();
+        let can_forward = self.history.can_go_forward();
+        let can_up = self.current_path.parent().is_some();
+
+        div()
+            .h(px(TITLE_BAR_HEIGHT))
+            .px_3()
+            .bg(theme::shell_fill())
+            .border_b_1()
+            .border_color(theme::border_color())
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap_3()
+            // Left navigation cluster: Back, Forward, Up, Refresh
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .child(
+                        icon_button("nav-back", "chevron-left", false, can_back)
+                            .on_click(cx.listener(|this, _, _, cx| this.go_back(cx))),
+                    )
+                    .child(
+                        icon_button("nav-forward", "chevron-right", false, can_forward)
+                            .on_click(cx.listener(|this, _, _, cx| this.go_forward(cx))),
+                    )
+                    .child(
+                        icon_button("nav-up", "arrow-up", false, can_up)
+                            .on_click(cx.listener(|this, _, _, cx| this.go_up(cx))),
+                    )
+                    .child(
+                        icon_button("nav-refresh", "rotate-cw", false, true)
+                            .on_click(cx.listener(|this, _, _, cx| this.refresh(cx))),
+                    ),
+            )
+            // Center breadcrumb / URL path bar
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .child(self.render_breadcrumb(cx)),
+            )
+            // Right controls cluster
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    // Search / Command Palette Trigger
+                    .child(
+                        div()
+                            .id("search-filter-pill")
+                            .h(px(theme::BUTTON_HEIGHT))
+                            .px_3()
+                            .bg(theme::card_fill())
+                            .rounded(px(RADIUS_ROW))
+                            .border_1()
+                            .border_color(theme::border_color())
+                            .cursor_pointer()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .hover(|s| s.bg(theme::hover_fill()).border_color(theme::accent().opacity(0.4)))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.show_command_palette = true;
+                                this.command_palette_query.clear();
+                                this.command_palette_selected = 0;
+                                cx.notify();
+                            }))
+                            .child(icon("search", 13.).text_color(theme::text_faint()))
+                            .child(
+                                div()
+                                    .text_size(px(theme::TEXT_SMALL))
+                                    .text_color(theme::text_faint())
+                                    .child("Type a command or search..."),
+                            )
+                            .child(
+                                div()
+                                    .px_1p5()
+                                    .py_0p5()
+                                    .rounded(px(3.))
+                                    .bg(theme::shell_fill())
+                                    .border_1()
+                                    .border_color(theme::border_subtle())
+                                    .text_size(px(10.))
+                                    .text_color(theme::text_faint())
+                                    .child("Ctrl+K"),
+                            ),
+                    )
+                    // Filter & Sort Button
+                    .child(
+                        icon_button("top-filter-btn", "filter", self.show_filter_menu || self.has_active_filters(), true)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.show_filter_menu = !this.show_filter_menu;
+                                cx.notify();
+                            })),
+                    )
+                    // New Folder Button (+)
+                    .child(
+                        icon_button("new-folder-btn", "add-01", false, true)
+                            .on_click(cx.listener(|this, _, _, cx| this.create_new_folder(cx))),
+                    )
+                    // View Mode Switcher
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .bg(theme::card_fill())
+                            .rounded(px(RADIUS_ROW))
+                            .border_1()
+                            .border_color(theme::border_color())
+                            .p_0p5()
+                            .child(
+                                icon_button("view-grid", "grid", self.view_mode == ViewMode::Grid, true)
+                                    .on_click(cx.listener(|this, _, _, cx| this.set_view_mode(ViewMode::Grid, cx))),
+                            )
+                            .child(
+                                icon_button("view-list", "list", self.view_mode == ViewMode::List, true)
+                                    .on_click(cx.listener(|this, _, _, cx| this.set_view_mode(ViewMode::List, cx))),
+                            ),
+                    )
+                    // Settings Button
+                    .child(
+                        icon_button("top-settings", "settings", self.show_settings_modal, true)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.show_settings_modal = !this.show_settings_modal;
+                                cx.notify();
+                            })),
+                    )
+                    // Inspector Toggle Button
+                    .child(
+                        icon_button("toggle-inspector", "eye", self.show_inspector, true)
+                            .on_click(cx.listener(|this, _, _, cx| this.toggle_inspector(cx))),
+                    ),
+            )
+    }
+
+    fn render_breadcrumb(&self, cx: &mut Context<Self>) -> Div {
+        if self.path_editing {
+            return div()
+                .h(px(theme::PATH_BAR_HEIGHT))
+                .px_2()
+                .bg(theme::card_fill())
+                .rounded(px(RADIUS_ROW))
+                .border_1()
+                .border_color(theme::accent())
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(icon("hard-drive", 14.).text_color(theme::accent()))
+                .child(
+                    div()
+                        .flex_1()
+                        .text_size(px(theme::TEXT_SMALL))
+                        .text_color(theme::text_primary())
+                        .font_weight(gpui::FontWeight::MEDIUM)
+                        .child(format!("{}|", self.path_input_text)),
+                )
+                .child(
+                    icon_button("path-commit-btn", "check-hi", false, true)
+                        .on_click(cx.listener(|this, _, _, cx| this.commit_path_input(cx))),
+                )
+                .child(
+                    icon_button("path-cancel-btn", "cancel-01", false, true)
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.path_editing = false;
+                            cx.notify();
+                        })),
+                );
+        }
+
+        let mut segments = Vec::new();
+        let mut curr = Some(self.current_path.as_path());
+
+        while let Some(p) = curr {
+            if let Some(file_name) = p.file_name() {
+                segments.push((file_name.to_string_lossy().to_string(), p.to_path_buf()));
+            } else if p == Path::new("/") {
+                segments.push(("/".to_string(), p.to_path_buf()));
+            }
+            curr = p.parent();
+        }
+        segments.reverse();
+
+        if segments.is_empty() {
+            segments.push(("/".to_string(), PathBuf::from("/")));
+        }
+
+        let current_path = self.current_path.clone();
+
+        div()
+            .h(px(theme::PATH_BAR_HEIGHT))
+            .px_2()
+            .bg(theme::card_fill())
+            .rounded(px(RADIUS_ROW))
+            .border_1()
+            .border_color(theme::border_color())
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap_1()
+            .child(
+                div()
+                    .flex_1()
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .overflow_hidden()
+                    .children(segments.into_iter().enumerate().flat_map(|(i, (name, path))| {
+                        let is_last = current_path == path;
+                        let target = path.clone();
+
+                        let pill = div()
+                            .id(ElementId::from(format!("crumb-{}", i)))
+                            .px_2()
+                            .py_0p5()
+                            .rounded(px(4.))
+                            .cursor_pointer()
+                            .when(!is_last, |d| {
+                                d.hover(|s| s.bg(theme::hover_fill()))
+                            })
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.navigate_to(target.clone(), cx);
+                            }))
+                            .child(
+                                div()
+                                    .text_size(px(theme::TEXT_SMALL))
+                                    .text_color(if is_last { theme::accent() } else { theme::text_muted() })
+                                    .font_weight(if is_last { gpui::FontWeight::SEMIBOLD } else { gpui::FontWeight::NORMAL })
+                                    .child(name),
+                            )
+                            .into_any_element();
+
+                        let chevron = if !is_last {
+                            Some(
+                                icon("chevron-right", 10.)
+                                    .text_color(theme::text_faint())
+                                    .into_any_element(),
+                            )
+                        } else {
+                            None
+                        };
+
+                        [Some(pill), chevron].into_iter().flatten()
+                    })),
+            )
+            .child(
+                icon_button("edit-path-btn", "pencil", false, true)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.path_editing = true;
+                        this.search_active = false;
+                        this.path_input_text = this.current_path.to_string_lossy().to_string();
+                        cx.notify();
+                    })),
+            )
+    }
+
+    fn render_settings_modal(&self, cx: &mut Context<Self>) -> AnyElement {
+        div()
+            .id("settings-modal-backdrop")
+            .absolute()
+            .inset_0()
+            .bg(gpui::rgba(0x00000088))
+            .flex()
+            .items_center()
+            .justify_center()
+            .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.show_settings_modal = false;
+                cx.notify();
+            }))
+            .child(
+                div()
+                    .id("settings-modal-content")
+                    .w(px(500.))
+                    .bg(theme::shell_fill())
+                    .border_1()
+                    .border_color(theme::border_color())
+                    .rounded(px(RADIUS_CARD))
+                    .p_5()
+                    .flex()
+                    .flex_col()
+                    .gap_3p5()
+                    .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
+                    .on_click(|_, _, cx| cx.stop_propagation())
+                    // Header
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .child(icon("settings", 18.).text_color(theme::accent()))
+                                    .child(
+                                        div()
+                                            .text_size(px(theme::TEXT_HEADER))
+                                            .font_weight(gpui::FontWeight::BOLD)
+                                            .text_color(theme::text_primary())
+                                            .child("Settings & Preferences"),
+                                    ),
+                            )
+                            .child(
+                                icon_button("close-settings", "cancel-01", false, true)
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.show_settings_modal = false;
+                                        cx.notify();
+                                    })),
+                            ),
+                    )
+                    // Section 1: View & Layout
+                    .child(
+                        div()
+                            .text_size(px(11.))
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .text_color(theme::accent())
+                            .child("VIEW & LAYOUT"),
+                    )
+                    // Option 1: Show Hidden Files
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .py_1p5()
+                            .border_b_1()
+                            .border_color(theme::border_subtle())
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .child(
+                                        div()
+                                            .text_size(px(theme::TEXT_BODY))
+                                            .font_weight(gpui::FontWeight::MEDIUM)
+                                            .text_color(theme::text_primary())
+                                            .child("Show Hidden Files"),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(px(theme::TEXT_CAPTION))
+                                            .text_color(theme::text_faint())
+                                            .child("Display dotfiles and hidden folders (Ctrl+H)"),
+                                    ),
+                            )
+                            .child(
+                                button(
+                                    "toggle-hidden-btn",
+                                    if self.show_hidden { ButtonLook::Primary } else { ButtonLook::Secondary },
+                                )
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.show_hidden = !this.show_hidden;
+                                    this.sort_and_filter();
+                                    cx.notify();
+                                }))
+                                .child(if self.show_hidden { "ON" } else { "OFF" }),
+                            ),
+                    )
+                    // Option 2: Sort Folders First
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .py_1p5()
+                            .border_b_1()
+                            .border_color(theme::border_subtle())
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .child(
+                                        div()
+                                            .text_size(px(theme::TEXT_BODY))
+                                            .font_weight(gpui::FontWeight::MEDIUM)
+                                            .text_color(theme::text_primary())
+                                            .child("Sort Folders First"),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(px(theme::TEXT_CAPTION))
+                                            .text_color(theme::text_faint())
+                                            .child("Keep directories grouped above files"),
+                                    ),
+                            )
+                            .child(
+                                button(
+                                    "toggle-folders-first-btn",
+                                    if self.sort_folders_first { ButtonLook::Primary } else { ButtonLook::Secondary },
+                                )
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.sort_folders_first = !this.sort_folders_first;
+                                    this.sort_and_filter();
+                                    cx.notify();
+                                }))
+                                .child(if self.sort_folders_first { "ON" } else { "OFF" }),
+                            ),
+                    )
+                    // Option 3: View Mode & Card Zoom
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .py_1p5()
+                            .border_b_1()
+                            .border_color(theme::border_subtle())
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .child(
+                                        div()
+                                            .text_size(px(theme::TEXT_BODY))
+                                            .font_weight(gpui::FontWeight::MEDIUM)
+                                            .text_color(theme::text_primary())
+                                            .child("Grid Icon Size"),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(px(theme::TEXT_CAPTION))
+                                            .text_color(theme::text_faint())
+                                            .child("Zoom level for grid thumbnails"),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .gap_1p5()
+                                    .child(
+                                        button("zoom-sm", if self.zoom <= 95. { ButtonLook::Primary } else { ButtonLook::Secondary })
+                                            .on_click(cx.listener(|this, _, _, cx| { this.zoom = 90.; cx.notify(); }))
+                                            .child("Small"),
+                                    )
+                                    .child(
+                                        button("zoom-med", if self.zoom > 95. && self.zoom < 135. { ButtonLook::Primary } else { ButtonLook::Secondary })
+                                            .on_click(cx.listener(|this, _, _, cx| { this.zoom = 110.; cx.notify(); }))
+                                            .child("Medium"),
+                                    )
+                                    .child(
+                                        button("zoom-lg", if self.zoom >= 135. { ButtonLook::Primary } else { ButtonLook::Secondary })
+                                            .on_click(cx.listener(|this, _, _, cx| { this.zoom = 150.; cx.notify(); }))
+                                            .child("Large"),
+                                    ),
+                            ),
+                    )
+                    // Section 2: Thumbnails & Performance
+                    .child(
+                        div()
+                            .text_size(px(11.))
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .text_color(theme::accent())
+                            .child("PERFORMANCE & MEDIA"),
+                    )
+                    // Option 4: Thumbnails
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .py_1p5()
+                            .border_b_1()
+                            .border_color(theme::border_subtle())
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .child(
+                                        div()
+                                            .text_size(px(theme::TEXT_BODY))
+                                            .font_weight(gpui::FontWeight::MEDIUM)
+                                            .text_color(theme::text_primary())
+                                            .child("Thumbnail Previews"),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(px(theme::TEXT_CAPTION))
+                                            .text_color(theme::text_faint())
+                                            .child("Render image and video thumbnails"),
+                                    ),
+                            )
+                            .child(
+                                button(
+                                    "toggle-thumbs-btn",
+                                    if self.enable_thumbnails { ButtonLook::Primary } else { ButtonLook::Secondary },
+                                )
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.enable_thumbnails = !this.enable_thumbnails;
+                                    cx.notify();
+                                }))
+                                .child(if self.enable_thumbnails { "ON" } else { "OFF" }),
+                            ),
+                    )
+                    // Option 5: Terminal
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .py_1p5()
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .child(
+                                        div()
+                                            .text_size(px(theme::TEXT_BODY))
+                                            .font_weight(gpui::FontWeight::MEDIUM)
+                                            .text_color(theme::text_primary())
+                                            .child("External Terminal"),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(px(theme::TEXT_CAPTION))
+                                            .text_color(theme::text_faint())
+                                            .child("Launch shell at current directory"),
+                                    ),
+                            )
+                            .child(
+                                button("settings-open-term", ButtonLook::Secondary)
+                                    .on_click(cx.listener(|this, _, _, _| {
+                                        open_in_terminal(&this.current_path);
+                                    }))
+                                    .child("Open Terminal"),
+                            ),
+                    ),
+            )
+            .into_any_element()
+    }
+
+    fn render_filter_popover(&self, cx: &mut Context<Self>) -> AnyElement {
+        let is_any_filter_active = self.has_active_filters();
+        let total_count = self.entries.len();
+        let filtered_count = self.filtered_indices.len();
+
+        div()
+            .id("filter-popover-backdrop")
+            .absolute()
+            .inset_0()
+            .bg(gpui::rgba(0x00000077))
+            .flex()
+            .items_start()
+            .justify_end()
+            .pt(px(46.))
+            .pr(px(16.))
+            .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.show_filter_menu = false;
+                cx.notify();
+            }))
+            .child(
+                div()
+                    .id("filter-popover-card")
+                    .w(px(350.))
+                    .bg(theme::shell_fill())
+                    .border_1()
+                    .border_color(theme::border_color())
+                    .rounded(px(12.))
+                    .p_4()
+                    .flex()
+                    .flex_col()
+                    .gap_3()
+                    .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
+                    .on_click(|_, _, cx| cx.stop_propagation())
+                    // Header
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .child(icon("filter", 16.).text_color(theme::accent()))
+                                    .child(
+                                        div()
+                                            .text_size(px(14.))
+                                            .font_weight(gpui::FontWeight::BOLD)
+                                            .text_color(theme::text_primary())
+                                            .child("Filter & Sort"),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .when(is_any_filter_active, |d| {
+                                        d.child(
+                                            button("popover-reset-filters", ButtonLook::Ghost)
+                                                .on_click(cx.listener(|this, _, _, cx| this.reset_filters(cx)))
+                                                .child("Reset"),
+                                        )
+                                    })
+                                    .child(
+                                        icon_button("close-filter-popover", "cancel-01", false, true)
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.show_filter_menu = false;
+                                                cx.notify();
+                                            })),
+                                    ),
+                            ),
+                    )
+                    // Section 1: Sort Column
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1p5()
+                            .child(
+                                div()
+                                    .text_size(px(11.))
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .text_color(theme::text_faint())
+                                    .child("SORT BY"),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .gap_1p5()
+                                    .child(
+                                        button("sort-name", if self.sort_by == SortBy::Name { ButtonLook::Primary } else { ButtonLook::Secondary })
+                                            .on_click(cx.listener(|this, _, _, cx| this.toggle_sort(SortBy::Name, cx)))
+                                            .child("Name"),
+                                    )
+                                    .child(
+                                        button("sort-mod", if self.sort_by == SortBy::Modified { ButtonLook::Primary } else { ButtonLook::Secondary })
+                                            .on_click(cx.listener(|this, _, _, cx| this.toggle_sort(SortBy::Modified, cx)))
+                                            .child("Date"),
+                                    )
+                                    .child(
+                                        button("sort-size", if self.sort_by == SortBy::Size { ButtonLook::Primary } else { ButtonLook::Secondary })
+                                            .on_click(cx.listener(|this, _, _, cx| this.toggle_sort(SortBy::Size, cx)))
+                                            .child("Size"),
+                                    )
+                                    .child(
+                                        button("sort-type", if self.sort_by == SortBy::Type { ButtonLook::Primary } else { ButtonLook::Secondary })
+                                            .on_click(cx.listener(|this, _, _, cx| this.toggle_sort(SortBy::Type, cx)))
+                                            .child("Type"),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .justify_between()
+                                    .pt_1()
+                                    .child(
+                                        div()
+                                            .text_size(px(12.))
+                                            .text_color(theme::text_muted())
+                                            .child("Direction:"),
+                                    )
+                                    .child(
+                                        button("sort-direction", ButtonLook::Secondary)
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.sort_reversed = !this.sort_reversed;
+                                                this.sort_and_filter();
+                                                cx.notify();
+                                            }))
+                                            .child(if self.sort_reversed { "Descending ↓" } else { "Ascending ↑" }),
+                                    ),
+                            ),
+                    )
+                    // Divider
+                    .child(div().h(px(1.)).w_full().bg(theme::border_subtle()))
+                    // Section 2: Filter by Type
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1p5()
+                            .child(
+                                div()
+                                    .text_size(px(11.))
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .text_color(theme::text_faint())
+                                    .child("FILTER BY TYPE"),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_wrap()
+                                    .gap_1p5()
+                                    .child(
+                                        button("f-type-all", if self.type_filter == TypeFilter::All { ButtonLook::Primary } else { ButtonLook::Secondary })
+                                            .on_click(cx.listener(|this, _, _, cx| { this.type_filter = TypeFilter::All; this.sort_and_filter(); cx.notify(); }))
+                                            .child("All"),
+                                    )
+                                    .child(
+                                        button("f-type-folders", if self.type_filter == TypeFilter::Folders { ButtonLook::Primary } else { ButtonLook::Secondary })
+                                            .on_click(cx.listener(|this, _, _, cx| { this.type_filter = TypeFilter::Folders; this.sort_and_filter(); cx.notify(); }))
+                                            .child("Folders"),
+                                    )
+                                    .child(
+                                        button("f-type-docs", if self.type_filter == TypeFilter::Documents { ButtonLook::Primary } else { ButtonLook::Secondary })
+                                            .on_click(cx.listener(|this, _, _, cx| { this.type_filter = TypeFilter::Documents; this.sort_and_filter(); cx.notify(); }))
+                                            .child("Docs"),
+                                    )
+                                    .child(
+                                        button("f-type-images", if self.type_filter == TypeFilter::Images { ButtonLook::Primary } else { ButtonLook::Secondary })
+                                            .on_click(cx.listener(|this, _, _, cx| { this.type_filter = TypeFilter::Images; this.sort_and_filter(); cx.notify(); }))
+                                            .child("Images"),
+                                    )
+                                    .child(
+                                        button("f-type-media", if self.type_filter == TypeFilter::Media { ButtonLook::Primary } else { ButtonLook::Secondary })
+                                            .on_click(cx.listener(|this, _, _, cx| { this.type_filter = TypeFilter::Media; this.sort_and_filter(); cx.notify(); }))
+                                            .child("Media"),
+                                    )
+                                    .child(
+                                        button("f-type-code", if self.type_filter == TypeFilter::Code { ButtonLook::Primary } else { ButtonLook::Secondary })
+                                            .on_click(cx.listener(|this, _, _, cx| { this.type_filter = TypeFilter::Code; this.sort_and_filter(); cx.notify(); }))
+                                            .child("Code"),
+                                    )
+                                    .child(
+                                        button("f-type-archives", if self.type_filter == TypeFilter::Archives { ButtonLook::Primary } else { ButtonLook::Secondary })
+                                            .on_click(cx.listener(|this, _, _, cx| { this.type_filter = TypeFilter::Archives; this.sort_and_filter(); cx.notify(); }))
+                                            .child("Archives"),
+                                    ),
+                            ),
+                    )
+                    // Divider
+                    .child(div().h(px(1.)).w_full().bg(theme::border_subtle()))
+                    // Section 3: Filter by Date Modified
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1p5()
+                            .child(
+                                div()
+                                    .text_size(px(11.))
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .text_color(theme::text_faint())
+                                    .child("DATE MODIFIED"),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_wrap()
+                                    .gap_1p5()
+                                    .child(
+                                        button("f-date-any", if self.date_filter == DateFilter::Any { ButtonLook::Primary } else { ButtonLook::Secondary })
+                                            .on_click(cx.listener(|this, _, _, cx| { this.date_filter = DateFilter::Any; this.sort_and_filter(); cx.notify(); }))
+                                            .child("Any time"),
+                                    )
+                                    .child(
+                                        button("f-date-today", if self.date_filter == DateFilter::Today { ButtonLook::Primary } else { ButtonLook::Secondary })
+                                            .on_click(cx.listener(|this, _, _, cx| { this.date_filter = DateFilter::Today; this.sort_and_filter(); cx.notify(); }))
+                                            .child("Today"),
+                                    )
+                                    .child(
+                                        button("f-date-7d", if self.date_filter == DateFilter::Last7Days { ButtonLook::Primary } else { ButtonLook::Secondary })
+                                            .on_click(cx.listener(|this, _, _, cx| { this.date_filter = DateFilter::Last7Days; this.sort_and_filter(); cx.notify(); }))
+                                            .child("Past 7 Days"),
+                                    )
+                                    .child(
+                                        button("f-date-30d", if self.date_filter == DateFilter::Last30Days { ButtonLook::Primary } else { ButtonLook::Secondary })
+                                            .on_click(cx.listener(|this, _, _, cx| { this.date_filter = DateFilter::Last30Days; this.sort_and_filter(); cx.notify(); }))
+                                            .child("Past 30 Days"),
+                                    ),
+                            ),
+                    )
+                    // Divider
+                    .child(div().h(px(1.)).w_full().bg(theme::border_subtle()))
+                    // Section 4: Filter by Size
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1p5()
+                            .child(
+                                div()
+                                    .text_size(px(11.))
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .text_color(theme::text_faint())
+                                    .child("FILE SIZE"),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .gap_1p5()
+                                    .child(
+                                        button("f-size-any", if self.size_filter == SizeFilter::Any { ButtonLook::Primary } else { ButtonLook::Secondary })
+                                            .on_click(cx.listener(|this, _, _, cx| { this.size_filter = SizeFilter::Any; this.sort_and_filter(); cx.notify(); }))
+                                            .child("Any"),
+                                    )
+                                    .child(
+                                        button("f-size-small", if self.size_filter == SizeFilter::Small { ButtonLook::Primary } else { ButtonLook::Secondary })
+                                            .on_click(cx.listener(|this, _, _, cx| { this.size_filter = SizeFilter::Small; this.sort_and_filter(); cx.notify(); }))
+                                            .child("< 1 MB"),
+                                    )
+                                    .child(
+                                        button("f-size-med", if self.size_filter == SizeFilter::Medium { ButtonLook::Primary } else { ButtonLook::Secondary })
+                                            .on_click(cx.listener(|this, _, _, cx| { this.size_filter = SizeFilter::Medium; this.sort_and_filter(); cx.notify(); }))
+                                            .child("1-100 MB"),
+                                    )
+                                    .child(
+                                        button("f-size-large", if self.size_filter == SizeFilter::Large { ButtonLook::Primary } else { ButtonLook::Secondary })
+                                            .on_click(cx.listener(|this, _, _, cx| { this.size_filter = SizeFilter::Large; this.sort_and_filter(); cx.notify(); }))
+                                            .child("> 100 MB"),
+                                    ),
+                            ),
+                    )
+                    // Footer status
+                    .child(
+                        div()
+                            .pt_2()
+                            .border_t_1()
+                            .border_color(theme::border_subtle())
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .text_size(px(11.))
+                            .text_color(theme::text_faint())
+                            .child(format!("Showing {} of {} items", filtered_count, total_count))
+                            .child(
+                                button("done-filter-popover", ButtonLook::Primary)
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.show_filter_menu = false;
+                                        cx.notify();
+                                    }))
+                                    .child("Done"),
+                            ),
+                    ),
+            )
+            .into_any_element()
+    }
+
+    fn render_active_filters_bar(&self, cx: &mut Context<Self>) -> Div {
+        div()
+            .h(px(28.))
+            .px_3()
+            .bg(theme::shell_fill())
+            .border_b_1()
+            .border_color(theme::border_subtle())
+            .flex()
+            .items_center()
+            .justify_between()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_size(px(11.))
+                            .text_color(theme::text_faint())
+                            .child("Active Filters:"),
+                    )
+                    .when(self.type_filter != TypeFilter::All, |d| {
+                        d.child(
+                            div()
+                                .id("active-filter-type-chip")
+                                .px_2()
+                                .py_0p5()
+                                .rounded(px(4.))
+                                .bg(theme::accent().opacity(0.15))
+                                .border_1()
+                                .border_color(theme::accent().opacity(0.3))
+                                .flex()
+                                .items_center()
+                                .gap_1()
+                                .cursor_pointer()
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.type_filter = TypeFilter::All;
+                                    this.sort_and_filter();
+                                    cx.notify();
+                                }))
+                                .child(
+                                    div()
+                                        .text_size(px(11.))
+                                        .text_color(theme::accent())
+                                        .child(format!("{:?} ✕", self.type_filter)),
+                                ),
+                        )
+                    })
+                    .when(self.date_filter != DateFilter::Any, |d| {
+                        d.child(
+                            div()
+                                .id("active-filter-date-chip")
+                                .px_2()
+                                .py_0p5()
+                                .rounded(px(4.))
+                                .bg(theme::accent().opacity(0.15))
+                                .border_1()
+                                .border_color(theme::accent().opacity(0.3))
+                                .flex()
+                                .items_center()
+                                .gap_1()
+                                .cursor_pointer()
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.date_filter = DateFilter::Any;
+                                    this.sort_and_filter();
+                                    cx.notify();
+                                }))
+                                .child(
+                                    div()
+                                        .text_size(px(11.))
+                                        .text_color(theme::accent())
+                                        .child(format!("{:?} ✕", self.date_filter)),
+                                ),
+                        )
+                    })
+                    .when(self.size_filter != SizeFilter::Any, |d| {
+                        d.child(
+                            div()
+                                .id("active-filter-size-chip")
+                                .px_2()
+                                .py_0p5()
+                                .rounded(px(4.))
+                                .bg(theme::accent().opacity(0.15))
+                                .border_1()
+                                .border_color(theme::accent().opacity(0.3))
+                                .flex()
+                                .items_center()
+                                .gap_1()
+                                .cursor_pointer()
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.size_filter = SizeFilter::Any;
+                                    this.sort_and_filter();
+                                    cx.notify();
+                                }))
+                                .child(
+                                    div()
+                                        .text_size(px(11.))
+                                        .text_color(theme::accent())
+                                        .child(format!("{:?} ✕", self.size_filter)),
+                                ),
+                        )
+                    }),
+            )
+            .child(
+                button("clear-all-filters-chip", ButtonLook::Ghost)
+                    .on_click(cx.listener(|this, _, _, cx| this.reset_filters(cx)))
+                    .child("Clear All"),
+            )
+    }
+
+    fn get_palette_items(&self) -> Vec<PaletteItem> {
+        let q = self.command_palette_query.trim().to_lowercase();
+        let mut items = Vec::new();
+
+        let mut nav = Vec::new();
+        if let Some(p) = dirs::home_dir() {
+            nav.push(PaletteItem {
+                section: "Navigation",
+                title: "Home".to_string(),
+                subtitle: None,
+                icon_name: "home",
+                shortcut: Some("H"),
+                action: PaletteAction::Navigate(p),
+            });
+        }
+        if let Some(p) = dirs::document_dir() {
+            nav.push(PaletteItem {
+                section: "Navigation",
+                title: "Work".to_string(),
+                subtitle: None,
+                icon_name: "user",
+                shortcut: Some("W"),
+                action: PaletteAction::Navigate(p),
+            });
+        }
+        let doc_dir = dirs::document_dir().or_else(|| dirs::home_dir().map(|h| h.join("Documents")));
+        if let Some(p) = &doc_dir {
+            nav.push(PaletteItem {
+                section: "Navigation",
+                title: "Projects".to_string(),
+                subtitle: None,
+                icon_name: "layers",
+                shortcut: Some("P"),
+                action: PaletteAction::Navigate(p.clone()),
+            });
+        }
+        if let Some(p) = dirs::download_dir() {
+            nav.push(PaletteItem {
+                section: "Navigation",
+                title: "Downloads".to_string(),
+                subtitle: None,
+                icon_name: "download",
+                shortcut: Some("D"),
+                action: PaletteAction::Navigate(p),
+            });
+        }
+        if let Some(p) = dirs::home_dir() {
+            nav.push(PaletteItem {
+                section: "Navigation",
+                title: "Bookmarks".to_string(),
+                subtitle: None,
+                icon_name: "bookmark",
+                shortcut: Some("M"),
+                action: PaletteAction::Navigate(p),
+            });
+        }
+        if let Some(p) = dirs::desktop_dir() {
+            nav.push(PaletteItem {
+                section: "Navigation",
+                title: "Desktop".to_string(),
+                subtitle: None,
+                icon_name: "app-window",
+                shortcut: Some("K"),
+                action: PaletteAction::Navigate(p),
+            });
+        }
+        if let Some(p) = dirs::picture_dir() {
+            nav.push(PaletteItem {
+                section: "Navigation",
+                title: "Pictures".to_string(),
+                subtitle: None,
+                icon_name: "image",
+                shortcut: Some("I"),
+                action: PaletteAction::Navigate(p),
+            });
+        }
+        if let Some(p) = dirs::video_dir() {
+            nav.push(PaletteItem {
+                section: "Navigation",
+                title: "Videos".to_string(),
+                subtitle: None,
+                icon_name: "video",
+                shortcut: Some("V"),
+                action: PaletteAction::Navigate(p),
+            });
+        }
+        if let Some(p) = dirs::audio_dir() {
+            nav.push(PaletteItem {
+                section: "Navigation",
+                title: "Music".to_string(),
+                subtitle: None,
+                icon_name: "audio",
+                shortcut: Some("S"),
+                action: PaletteAction::Navigate(p),
+            });
+        }
+
+        // Projects Section (discover local projects in Documents)
+        let mut projects = Vec::new();
+        if let Some(doc_path) = doc_dir {
+            let candidate_names = ["Movie Finder", "Nova Gaming", "shark", "monodrive", "portfolio", "Recordly", "tolaria", "socialmess", "Bookmrk"];
+            for name in candidate_names {
+                let candidate_path = doc_path.join(name);
+                if candidate_path.is_dir() {
+                    projects.push(PaletteItem {
+                        section: "Projects",
+                        title: name.to_string(),
+                        subtitle: None,
+                        icon_name: "rocket",
+                        shortcut: None,
+                        action: PaletteAction::Navigate(candidate_path),
+                    });
+                }
+            }
+            // If empty, fall back to any subdirectories in Documents
+            if projects.is_empty() {
+                if let Ok(read_dir) = std::fs::read_dir(&doc_path) {
+                    for entry in read_dir.flatten().take(6) {
+                        let path = entry.path();
+                        if path.is_dir() {
+                            let title = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+                            if !title.starts_with('.') {
+                                projects.push(PaletteItem {
+                                    section: "Projects",
+                                    title,
+                                    subtitle: None,
+                                    icon_name: "rocket",
+                                    shortcut: None,
+                                    action: PaletteAction::Navigate(path),
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let actions = vec![
+            PaletteItem {
+                section: "Commands",
+                title: "Create New Folder".to_string(),
+                subtitle: Some("Create a new directory".to_string()),
+                icon_name: "add-01",
+                shortcut: Some("Ctrl+N"),
+                action: PaletteAction::NewFolder,
+            },
+            PaletteItem {
+                section: "Commands",
+                title: if self.view_mode == ViewMode::Grid { "Switch to List View".to_string() } else { "Switch to Grid View".to_string() },
+                subtitle: Some("Toggle display layout".to_string()),
+                icon_name: if self.view_mode == ViewMode::Grid { "list" } else { "grid" },
+                shortcut: Some("Ctrl+V"),
+                action: PaletteAction::ToggleViewMode,
+            },
+            PaletteItem {
+                section: "Commands",
+                title: if self.show_hidden { "Hide Hidden Files".to_string() } else { "Show Hidden Files".to_string() },
+                subtitle: Some("Toggle dotfiles visibility".to_string()),
+                icon_name: "eye",
+                shortcut: Some("Ctrl+H"),
+                action: PaletteAction::ToggleHidden,
+            },
+            PaletteItem {
+                section: "Commands",
+                title: "Toggle Properties Inspector".to_string(),
+                subtitle: Some("Show or hide sidebar properties".to_string()),
+                icon_name: "sliders",
+                shortcut: Some("Ctrl+I"),
+                action: PaletteAction::ToggleInspector,
+            },
+            PaletteItem {
+                section: "Commands",
+                title: "Open Folder in Terminal".to_string(),
+                subtitle: Some("Launch terminal at current path".to_string()),
+                icon_name: "terminal",
+                shortcut: Some("Ctrl+T"),
+                action: PaletteAction::OpenTerminal,
+            },
+            PaletteItem {
+                section: "Commands",
+                title: "Settings & Preferences".to_string(),
+                subtitle: Some("Configure Shark file manager".to_string()),
+                icon_name: "settings",
+                shortcut: Some("Ctrl+,"),
+                action: PaletteAction::OpenSettings,
+            },
+            PaletteItem {
+                section: "Commands",
+                title: "Refresh Directory".to_string(),
+                subtitle: Some("Reload folder from disk".to_string()),
+                icon_name: "rotate-cw",
+                shortcut: Some("Ctrl+R"),
+                action: PaletteAction::Refresh,
+            },
+        ];
+
+        let filters = vec![
+            PaletteItem {
+                section: "Filters",
+                title: "Filter: Only Images".to_string(),
+                subtitle: Some("Show PNG, JPG, WebP, SVG files".to_string()),
+                icon_name: "image",
+                shortcut: None,
+                action: PaletteAction::SetTypeFilter(TypeFilter::Images),
+            },
+            PaletteItem {
+                section: "Filters",
+                title: "Filter: Only Documents & Text".to_string(),
+                subtitle: Some("Show TXT, MD, PDF, CSV documents".to_string()),
+                icon_name: "document",
+                shortcut: None,
+                action: PaletteAction::SetTypeFilter(TypeFilter::Documents),
+            },
+            PaletteItem {
+                section: "Filters",
+                title: "Filter: Only Code & Scripts".to_string(),
+                subtitle: Some("Show RS, PY, JS, HTML, JSON files".to_string()),
+                icon_name: "code",
+                shortcut: None,
+                action: PaletteAction::SetTypeFilter(TypeFilter::Code),
+            },
+            PaletteItem {
+                section: "Filters",
+                title: "Filter: Modified Past 7 Days".to_string(),
+                subtitle: Some("Show files changed this week".to_string()),
+                icon_name: "clock",
+                shortcut: None,
+                action: PaletteAction::SetDateFilter(DateFilter::Last7Days),
+            },
+            PaletteItem {
+                section: "Filters",
+                title: "Filter: Large Files (> 100 MB)".to_string(),
+                subtitle: Some("Show files larger than 100 MB".to_string()),
+                icon_name: "hard-drive",
+                shortcut: None,
+                action: PaletteAction::SetSizeFilter(SizeFilter::Large),
+            },
+            PaletteItem {
+                section: "Filters",
+                title: "Clear All Active Filters".to_string(),
+                subtitle: Some("Reset to show all directory contents".to_string()),
+                icon_name: "rotate-ccw",
+                shortcut: None,
+                action: PaletteAction::ResetFilters,
+            },
+        ];
+
+        for item in nav {
+            if q.is_empty() || item.title.to_lowercase().contains(&q) {
+                items.push(item);
+            }
+        }
+        for item in projects {
+            if q.is_empty() || item.title.to_lowercase().contains(&q) {
+                items.push(item);
+            }
+        }
+        for item in actions {
+            if q.is_empty() || item.title.to_lowercase().contains(&q) {
+                items.push(item);
+            }
+        }
+        for item in filters {
+            if q.is_empty() || item.title.to_lowercase().contains(&q) {
+                items.push(item);
+            }
+        }
+
+        if !q.is_empty() {
+            let mut file_matches = 0;
+            for entry in &self.entries {
+                if file_matches >= 20 {
+                    break;
+                }
+                if entry.name_lower.contains(&q) {
+                    file_matches += 1;
+                    items.push(PaletteItem {
+                        section: "Files",
+                        title: entry.name.clone(),
+                        subtitle: Some(format!("{} • {}", entry.type_description(), entry.formatted_size())),
+                        icon_name: if entry.is_directory { "folder" } else { entry.icon_name },
+                        shortcut: Some(if entry.is_directory { "Open" } else { "Run" }),
+                        action: if entry.is_directory {
+                            PaletteAction::Navigate(entry.path.clone())
+                        } else {
+                            PaletteAction::OpenFile(entry.path.clone())
+                        },
+                    });
+                }
+            }
+        }
+
+        items
+    }
+
+    pub fn execute_palette_action(&mut self, action: PaletteAction, cx: &mut Context<Self>) {
+        self.show_command_palette = false;
+        match action {
+            PaletteAction::Navigate(path) => {
+                self.navigate_to(path, cx);
+            }
+            PaletteAction::NewFolder => {
+                self.create_new_folder(cx);
+            }
+            PaletteAction::ToggleViewMode => {
+                let next = if self.view_mode == ViewMode::Grid { ViewMode::List } else { ViewMode::Grid };
+                self.set_view_mode(next, cx);
+            }
+            PaletteAction::ToggleHidden => {
+                self.show_hidden = !self.show_hidden;
+                self.sort_and_filter();
+                cx.notify();
+            }
+            PaletteAction::ToggleInspector => {
+                self.toggle_inspector(cx);
+            }
+            PaletteAction::OpenTerminal => {
+                open_in_terminal(&self.current_path);
+            }
+            PaletteAction::OpenSettings => {
+                self.show_settings_modal = true;
+                cx.notify();
+            }
+            PaletteAction::Refresh => {
+                self.refresh(cx);
+            }
+            PaletteAction::OpenFile(path) => {
+                open_path(&path);
+            }
+            PaletteAction::SetTypeFilter(f) => {
+                self.type_filter = f;
+                self.sort_and_filter();
+                cx.notify();
+            }
+            PaletteAction::SetDateFilter(f) => {
+                self.date_filter = f;
+                self.sort_and_filter();
+                cx.notify();
+            }
+            PaletteAction::SetSizeFilter(f) => {
+                self.size_filter = f;
+                self.sort_and_filter();
+                cx.notify();
+            }
+            PaletteAction::ResetFilters => {
+                self.reset_filters(cx);
+            }
+        }
+    }
+
+    fn render_command_palette(&self, cx: &mut Context<Self>) -> AnyElement {
+        let items = self.get_palette_items();
+        let selected_idx = self.command_palette_selected;
+
+        let mut rendered_items = Vec::new();
+        let mut last_section = "";
+
+        for (idx, item) in items.iter().enumerate() {
+            if item.section != last_section {
+                if !last_section.is_empty() {
+                    rendered_items.push(
+                        div()
+                            .h(px(1.))
+                            .mx_2()
+                            .my_1p5()
+                            .bg(gpui::rgba(0xffffff0d))
+                            .into_any_element(),
+                    );
+                }
+                last_section = item.section;
+                rendered_items.push(
+                    div()
+                        .px_3()
+                        .pt_1p5()
+                        .pb_1()
+                        .text_size(px(11.))
+                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                        .text_color(gpui::rgba(0xffffff60))
+                        .child(item.section)
+                        .into_any_element(),
+                );
+            }
+
+            let is_selected = idx == selected_idx;
+            let action = item.action.clone();
+            let title = item.title.clone();
+            let subtitle = item.subtitle.clone();
+            let icon_name = item.icon_name;
+            let shortcut = item.shortcut;
+
+            let row = div()
+                .id(ElementId::from(format!("palette-item-{}", idx)))
+                .h(px(36.))
+                .px_3()
+                .rounded(px(8.))
+                .flex()
+                .items_center()
+                .justify_between()
+                .cursor_pointer()
+                .when(is_selected, |d| {
+                    d.bg(gpui::rgba(0xffffff15))
+                })
+                .when(!is_selected, |d| {
+                    d.hover(|s| s.bg(gpui::rgba(0xffffff09)))
+                })
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.execute_palette_action(action.clone(), cx);
+                }))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_3()
+                        .child(icon(icon_name, 16.).text_color(if is_selected { gpui::rgba(0xffffffff) } else { gpui::rgba(0xffffffa0) }))
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap_2()
+                                .child(
+                                    div()
+                                        .text_size(px(13.))
+                                        .text_color(if is_selected { gpui::rgba(0xffffffff) } else { gpui::rgba(0xffffffdd) })
+                                        .font_weight(if is_selected { gpui::FontWeight::MEDIUM } else { gpui::FontWeight::NORMAL })
+                                        .child(title),
+                                )
+                                .when_some(subtitle, |d, sub| {
+                                    d.child(
+                                        div()
+                                            .text_size(px(11.))
+                                            .text_color(gpui::rgba(0xffffff50))
+                                            .child(format!("• {}", sub)),
+                                    )
+                                }),
+                        ),
+                )
+                .when_some(shortcut, |d, sc| {
+                    if sc.len() == 1 {
+                        d.child(
+                            div()
+                                .text_size(px(12.))
+                                .font_weight(gpui::FontWeight::MEDIUM)
+                                .text_color(if is_selected { gpui::rgba(0xffffffaa) } else { gpui::rgba(0xffffff50) })
+                                .child(sc),
+                        )
+                    } else {
+                        d.child(
+                            div()
+                                .px_1p5()
+                                .py_0p5()
+                                .rounded(px(4.))
+                                .bg(gpui::rgba(0xffffff0d))
+                                .border_1()
+                                .border_color(gpui::rgba(0xffffff10))
+                                .text_size(px(10.))
+                                .text_color(if is_selected { gpui::rgba(0xffffffff) } else { gpui::rgba(0xffffff70) })
+                                .child(sc),
+                        )
+                    }
+                })
+                .into_any_element();
+
+            rendered_items.push(row);
+        }
+
+        let user_label = std::env::var("USER").unwrap_or_else(|_| "Sahilcodex".to_string());
+        let capitalized_user = if user_label == "sahilcodex" {
+            "Sahilcodex".to_string()
+        } else {
+            let mut c = user_label.chars();
+            match c.next() {
+                None => "Shark".to_string(),
+                Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+            }
+        };
+
+        let action_verb = if let Some(item) = items.get(selected_idx) {
+            match item.section {
+                "Navigation" | "Projects" => "Go to page",
+                "Commands" => "Run command",
+                "Filters" => "Apply filter",
+                _ => "Open file",
+            }
+        } else {
+            "Go to page"
+        };
+
+        // Live preview of highlighted palette item
+        let selected_item = items.get(selected_idx);
+        let preview_pane = if let Some(item) = selected_item {
+            let item_action = item.action.clone();
+            let mut preview_file: Option<FileEntry> = None;
+
+            if let PaletteAction::OpenFile(path) = &item_action {
+                if let Some(entry) = self.entries.iter().find(|e| &e.path == path) {
+                    preview_file = Some(entry.clone());
+                } else if let Ok(entry) = FileEntry::from_path(path) {
+                    preview_file = Some(entry);
+                }
+            } else if let PaletteAction::Navigate(path) = &item_action {
+                if let Some(entry) = self.entries.iter().find(|e| &e.path == path) {
+                    preview_file = Some(entry.clone());
+                } else if let Ok(entry) = FileEntry::from_path(path) {
+                    preview_file = Some(entry);
+                }
+            }
+
+            if let Some(entry) = preview_file {
+                let thumb_path = if self.enable_thumbnails {
+                    self.thumbnails.get_thumbnail_path(&entry.path, entry.content_type, entry.size)
+                } else {
+                    None
+                };
+                let icon_color = gpui::rgba(entry.icon_color_hex());
+                let badge = entry.format_badge();
+
+                div()
+                    .w(px(290.))
+                    .h_full()
+                    .bg(gpui::rgba(0x0e0e11fa))
+                    .p_4()
+                    .flex()
+                    .flex_col()
+                    .justify_between()
+                    .gap_3()
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .items_center()
+                            .gap_2p5()
+                            // Thumbnail / Icon card
+                            .child(
+                                div()
+                                    .h(px(130.))
+                                    .w_full()
+                                    .rounded(px(8.))
+                                    .bg(gpui::rgba(0x00000030))
+                                    .border_1()
+                                    .border_color(gpui::rgba(0xffffff0d))
+                                    .flex()
+                                    .flex_col()
+                                    .items_center()
+                                    .justify_center()
+                                    .gap_2()
+                                    .child(match thumb_path {
+                                        Some(p) => img(p)
+                                            .max_h(px(120.))
+                                            .max_w(px(200.))
+                                            .rounded(px(6.))
+                                            .into_any_element(),
+                                        None => div()
+                                            .flex()
+                                            .flex_col()
+                                            .items_center()
+                                            .gap_2()
+                                            .child(icon(entry.icon_name, 48.).text_color(icon_color))
+                                            .when_some(badge, |d, b| {
+                                                d.child(
+                                                    div()
+                                                        .px_2()
+                                                        .py_0p5()
+                                                        .rounded(px(4.))
+                                                        .bg(icon_color.opacity(0.15))
+                                                        .border_1()
+                                                        .border_color(icon_color.opacity(0.3))
+                                                        .text_size(px(10.))
+                                                        .font_weight(gpui::FontWeight::BOLD)
+                                                        .text_color(icon_color)
+                                                        .child(b),
+                                                )
+                                            })
+                                            .into_any_element(),
+                                    }),
+                            )
+                            // Title
+                            .child(
+                                div()
+                                    .text_size(px(14.))
+                                    .font_weight(gpui::FontWeight::BOLD)
+                                    .text_color(gpui::white())
+                                    .text_center()
+                                    .max_w_full()
+                                    .overflow_hidden()
+                                    .child(entry.name.clone()),
+                            )
+                            // Metadata Table
+                            .child(
+                                div()
+                                    .w_full()
+                                    .p_2p5()
+                                    .rounded(px(6.))
+                                    .bg(gpui::rgba(0xffffff06))
+                                    .flex()
+                                    .flex_col()
+                                    .gap_1p5()
+                                    .text_size(px(11.))
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .justify_between()
+                                            .child(div().text_color(gpui::rgba(0xffffff50)).child("Type"))
+                                            .child(div().text_color(gpui::rgba(0xffffffcc)).child(entry.type_description())),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .justify_between()
+                                            .child(div().text_color(gpui::rgba(0xffffff50)).child("Size"))
+                                            .child(div().text_color(gpui::rgba(0xffffffcc)).child(entry.formatted_size())),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .justify_between()
+                                            .child(div().text_color(gpui::rgba(0xffffff50)).child("Modified"))
+                                            .child(div().text_color(gpui::rgba(0xffffffcc)).child(entry.formatted_modified())),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .justify_between()
+                                            .child(div().text_color(gpui::rgba(0xffffff50)).child("Permissions"))
+                                            .child(div().text_color(gpui::rgba(0xffffffcc)).child(entry.formatted_permissions())),
+                                    ),
+                            ),
+                    )
+                    .child(
+                        button("preview-open-btn", ButtonLook::Primary)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.execute_palette_action(item_action.clone(), cx);
+                            }))
+                            .child(if entry.is_directory { "Open Folder ↵" } else { "Open File ↵" }),
+                    )
+            } else {
+                div()
+                    .w(px(290.))
+                    .h_full()
+                    .bg(gpui::rgba(0x0e0e11fa))
+                    .p_4()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .justify_center()
+                    .gap_3()
+                    .child(icon(item.icon_name, 52.).text_color(theme::accent()))
+                    .child(
+                        div()
+                            .text_size(px(15.))
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .text_color(gpui::white())
+                            .child(item.title.clone()),
+                    )
+                    .when_some(item.subtitle.clone(), |d, sub| {
+                        d.child(
+                            div()
+                                .text_size(px(12.))
+                                .text_color(gpui::rgba(0xffffff70))
+                                .text_center()
+                                .child(sub),
+                        )
+                    })
+                    .when_some(item.shortcut, |d, sc| {
+                        d.child(
+                            div()
+                                .px_2p5()
+                                .py_1()
+                                .rounded(px(4.))
+                                .bg(gpui::rgba(0xffffff0d))
+                                .border_1()
+                                .border_color(gpui::rgba(0xffffff15))
+                                .text_size(px(11.))
+                                .text_color(gpui::white())
+                                .child(format!("Shortcut: {}", sc)),
+                        )
+                    })
+            }
+        } else {
+            div()
+                .w(px(290.))
+                .h_full()
+                .bg(gpui::rgba(0x0e0e11fa))
+                .p_4()
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_size(px(12.))
+                .text_color(gpui::rgba(0xffffff40))
+                .child("Select an item to preview")
+        };
+
+        div()
+            .id("command-palette-backdrop")
+            .absolute()
+            .inset_0()
+            .bg(gpui::rgba(0x000000a6))
+            .flex()
+            .items_start()
+            .justify_center()
+            .pt(px(70.))
+            .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.show_command_palette = false;
+                this.command_palette_query.clear();
+                cx.notify();
+            }))
+            .child(
+                div()
+                    .id("command-palette-card")
+                    .w(px(760.))
+                    .max_h(px(480.))
+                    .bg(gpui::rgba(0x131316fc))
+                    .border_1()
+                    .border_color(gpui::rgba(0xffffff15))
+                    .rounded(px(14.))
+                    .flex()
+                    .flex_col()
+                    .overflow_hidden()
+                    .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
+                    .on_click(|_, _, cx| cx.stop_propagation())
+                    // Header Input Row
+                    .child(
+                        div()
+                            .h(px(48.))
+                            .px_4()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .gap_3()
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .flex()
+                                    .items_center()
+                                    .gap_3()
+                                    .child(icon("search", 16.).text_color(gpui::rgba(0xffffff60)))
+                                    .child(
+                                        div()
+                                            .text_size(px(14.))
+                                            .text_color(if self.command_palette_query.is_empty() {
+                                                gpui::rgba(0xffffff50)
+                                            } else {
+                                                gpui::rgba(0xffffffff)
+                                            })
+                                            .child(if self.command_palette_query.is_empty() {
+                                                "Type a command or search...".to_string()
+                                            } else {
+                                                format!("{}|", self.command_palette_query)
+                                            }),
+                                    ),
+                            )
+                            .child(
+                                icon_button("close-palette", "cancel-01", false, true)
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.show_command_palette = false;
+                                        this.command_palette_query.clear();
+                                        cx.notify();
+                                    })),
+                            ),
+                    )
+                    // Divider
+                    .child(div().h(px(1.)).w_full().bg(gpui::rgba(0xffffff10)))
+                    // Split Body: Left List + Right Preview
+                    .child(
+                        div()
+                            .flex_1()
+                            .flex()
+                            .overflow_hidden()
+                            // Left list & footer
+                            .child(
+                                div()
+                                    .w(px(469.))
+                                    .flex()
+                                    .flex_col()
+                                    .child(
+                                        div()
+                                            .id("palette-items-list")
+                                            .flex_1()
+                                            .overflow_y_scroll()
+                                            .max_h(px(340.))
+                                            .p_2()
+                                            .flex()
+                                            .flex_col()
+                                            .gap_0p5()
+                                            .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
+                                            .children(rendered_items),
+                                    )
+                                    // Footer
+                                    .child(
+                                        div()
+                                            .h(px(34.))
+                                            .px_4()
+                                            .bg(gpui::rgba(0x101012fa))
+                                            .border_t_1()
+                                            .border_color(gpui::rgba(0xffffff10))
+                                            .flex()
+                                            .items_center()
+                                            .justify_between()
+                                            .text_size(px(11.))
+                                            .text_color(gpui::rgba(0xffffff50))
+                                            .child(
+                                                div()
+                                                    .child(capitalized_user),
+                                            )
+                                            .child(
+                                                div()
+                                                    .flex()
+                                                    .items_center()
+                                                    .gap_4()
+                                                    .child(
+                                                        div()
+                                                            .flex()
+                                                            .items_center()
+                                                            .gap_1p5()
+                                                            .child(action_verb)
+                                                            .child(
+                                                                div()
+                                                                    .text_size(px(12.))
+                                                                    .text_color(gpui::rgba(0xffffff80))
+                                                                    .child("↵"),
+                                                            ),
+                                                    )
+                                                    .child(
+                                                        div()
+                                                            .flex()
+                                                            .items_center()
+                                                            .gap_1p5()
+                                                            .child("Exit")
+                                                            .child(
+                                                                div()
+                                                                    .px_1()
+                                                                    .py_0p5()
+                                                                    .rounded(px(3.))
+                                                                    .bg(gpui::rgba(0xffffff0d))
+                                                                    .border_1()
+                                                                    .border_color(gpui::rgba(0xffffff10))
+                                                                    .text_size(px(9.))
+                                                                    .text_color(gpui::rgba(0xffffff80))
+                                                                    .child("Esc"),
+                                                            ),
+                                                    ),
+                                            ),
+                                    ),
+                            )
+                            // Vertical Divider
+                            .child(div().w(px(1.)).h_full().bg(gpui::rgba(0xffffff10)))
+                            // Right Preview Pane
+                            .child(preview_pane),
+                    ),
+            )
+            .into_any_element()
+    }
+
+    fn render_sidebar(&self, cx: &mut Context<Self>) -> Div {
+        let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
+        let mut places = vec![
+            ("place-home", "Home", "home", home.clone()),
+            ("place-desktop", "Desktop", "app-window", home.join("Desktop")),
+            ("place-documents", "Documents", "document", home.join("Documents")),
+            ("place-downloads", "Downloads", "download", home.join("Downloads")),
+            ("place-music", "Music", "audio", home.join("Music")),
+            ("place-pictures", "Pictures", "image", home.join("Pictures")),
+            ("place-videos", "Videos", "video", home.join("Videos")),
+        ];
+
+        if let Some(data_dir) = dirs::data_local_dir() {
+            places.push(("place-trash", "Trash", "trash", data_dir.join("Trash/files")));
+        }
+
+        let locations = vec![
+            ("loc-root", "File System", "hard-drive", PathBuf::from("/")),
+        ];
+
+        div()
+            .w(px(200.))
+            .h_full()
+            .bg(theme::sidebar_fill())
+            .border_r_1()
+            .border_color(theme::border_color())
+            .p_3()
+            .flex()
+            .flex_col()
+            .child(self.render_sidebar_section("FAVORITES", places, cx))
+            .child(self.render_sidebar_section("LOCATIONS", locations, cx))
+    }
+
+    fn render_sidebar_section(
+        &self,
+        title: &'static str,
+        items: Vec<(&'static str, &'static str, &'static str, PathBuf)>,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .mb_4()
+            .child(
+                div()
+                    .px_3()
+                    .py_1()
+                    .text_size(px(theme::TEXT_CAPTION))
+                    .font_weight(gpui::FontWeight::BOLD)
+                    .text_color(theme::text_faint())
+                    .child(title),
+            )
+            .children(items.into_iter().map(|(id, label, icon_name, path)| {
+                let is_active = self.current_path == path;
+                let target = path.clone();
+
+                div()
+                    .id(ElementId::from(id))
+                    .h(px(SIDEBAR_ROW_HEIGHT))
+                    .px_3()
+                    .rounded(px(RADIUS_ROW))
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .cursor_pointer()
+                    .when(is_active, |d| {
+                        d.bg(theme::selection_fill())
+                            .border_1()
+                            .border_color(theme::accent().opacity(0.4))
+                    })
+                    .when(!is_active, |d| {
+                        d.hover(|s| s.bg(theme::hover_fill()))
+                    })
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.navigate_to(target.clone(), cx);
+                    }))
+                    .child(
+                        icon(icon_name, 15.)
+                            .text_color(if is_active { theme::accent() } else { theme::text_muted() }),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(theme::TEXT_BODY))
+                            .text_color(if is_active { theme::text_primary() } else { theme::text_muted() })
+                            .font_weight(if is_active { gpui::FontWeight::SEMIBOLD } else { gpui::FontWeight::NORMAL })
+                            .child(label),
+                    )
+            }))
+    }
+
+    fn render_pane(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        if self.filtered_indices.is_empty() {
+            return div()
+                .flex_1()
+                .h_full()
+                .bg(theme::pane_fill())
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_color(theme::text_faint())
+                .text_size(px(theme::TEXT_BODY))
+                .child("This folder is empty")
+                .into_any_element();
+        }
+
+        match self.view_mode {
+            ViewMode::List => {
+                let header_row = div()
+                    .h(px(28.))
+                    .px_3()
+                    .bg(theme::shell_fill())
+                    .border_b_1()
+                    .border_color(theme::border_subtle())
+                    .flex()
+                    .items_center()
+                    .text_size(px(theme::TEXT_CAPTION))
+                    .font_weight(gpui::FontWeight::BOLD)
+                    .text_color(theme::text_faint())
+                    .child(
+                        div()
+                            .id("col-header-name")
+                            .flex_1()
+                            .flex()
+                            .items_center()
+                            .gap_1()
+                            .cursor_pointer()
+                            .hover(|s| s.text_color(theme::text_primary()))
+                            .on_click(cx.listener(|this, _, _, cx| this.toggle_sort(SortBy::Name, cx)))
+                            .child("NAME")
+                            .when(self.sort_by == SortBy::Name, |d| {
+                                d.child(icon(if self.sort_reversed { "chevron-down-hi" } else { "chevron-left" }, 10.))
+                            }),
+                    )
+                    .child(
+                        div()
+                            .id("col-header-size")
+                            .w(px(100.))
+                            .text_right()
+                            .cursor_pointer()
+                            .hover(|s| s.text_color(theme::text_primary()))
+                            .on_click(cx.listener(|this, _, _, cx| this.toggle_sort(SortBy::Size, cx)))
+                            .child("SIZE"),
+                    )
+                    .child(
+                        div()
+                            .id("col-header-type")
+                            .w(px(130.))
+                            .px_2()
+                            .cursor_pointer()
+                            .hover(|s| s.text_color(theme::text_primary()))
+                            .on_click(cx.listener(|this, _, _, cx| this.toggle_sort(SortBy::Type, cx)))
+                            .child("TYPE"),
+                    )
+                    .child(
+                        div()
+                            .id("col-header-modified")
+                            .w(px(140.))
+                            .cursor_pointer()
+                            .hover(|s| s.text_color(theme::text_primary()))
+                            .on_click(cx.listener(|this, _, _, cx| this.toggle_sort(SortBy::Modified, cx)))
+                            .child("MODIFIED"),
+                    );
+
+                let list = uniform_list(
+                    "list-view",
+                    self.filtered_indices.len(),
+                    cx.processor(Self::render_list_rows),
+                )
+                .track_scroll(&self.scroll_handle)
+                .size_full()
+                .min_h_0();
+
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .min_h_0()
+                    .h_full()
+                    .bg(theme::pane_fill())
+                    .relative()
+                    .flex()
+                    .flex_col()
+                    .overflow_hidden()
+                    .child(header_row)
+                    .child(list)
+                    .into_any_element()
+            }
+            ViewMode::Grid => {
+                let cols = self.grid_cols.max(1);
+                let num_rows = (self.filtered_indices.len() + cols - 1) / cols;
+
+                let grid = uniform_list(
+                    "grid-view",
+                    num_rows,
+                    cx.processor(Self::render_grid_rows),
+                )
+                .track_scroll(&self.scroll_handle)
+                .size_full()
+                .p_2();
+
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .min_h_0()
+                    .h_full()
+                    .bg(theme::pane_fill())
+                    .relative()
+                    .flex()
+                    .flex_col()
+                    .overflow_hidden()
+                    .child(grid)
+                    .into_any_element()
+            }
+        }
+    }
+
+    fn render_list_rows(
+        &mut self,
+        range: std::ops::Range<usize>,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
+        range
+            .map(|i| {
+                let entry = &self.entries[self.filtered_indices[i]];
+                let is_selected = self.selected_index == Some(i);
+                let thumb_path = self.thumbnails.get_thumbnail_path(&entry.path, entry.content_type, entry.size);
+
+                div()
+                    .id(ElementId::from(format!("list-row-{}", i)))
+                    .w_full()
+                    .h(px(theme::ROW_HEIGHT))
+                    .min_h(px(theme::ROW_HEIGHT))
+                    .max_h(px(theme::ROW_HEIGHT))
+                    .flex_shrink_0()
+                    .px_3()
+                    .rounded(px(RADIUS_THUMB))
+                    .flex()
+                    .items_center()
+                    .cursor_pointer()
+                    .when(is_selected, |d| {
+                        d.bg(theme::selection_fill())
+                            .border_1()
+                            .border_color(theme::accent().opacity(0.4))
+                    })
+                    .when(!is_selected, |d| {
+                        d.hover(|s| s.bg(theme::hover_fill()))
+                    })
+                    .on_click(cx.listener(move |this, ev: &ClickEvent, _, cx| {
+                        if ev.click_count() >= 2 {
+                            this.open_selected(cx);
+                        } else {
+                            this.selected_index = Some(i);
+                            cx.notify();
+                        }
+                    }))
+                    // Name & Icon
+                    .child(
+                        div()
+                            .flex_1()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .overflow_hidden()
+                            .child(match thumb_path {
+                                Some(p) => img(p)
+                                    .size(px(18.))
+                                    .rounded(px(2.))
+                                    .into_any_element(),
+                                None => {
+                                    if entry.is_directory {
+                                        img("folder.svg")
+                                            .size(px(20.))
+                                            .into_any_element()
+                                    } else {
+                                        icon(entry.icon_name, 16.)
+                                            .text_color(gpui::rgba(entry.icon_color_hex()))
+                                            .into_any_element()
+                                    }
+                                }
+                            })
+                            .child(
+                                div()
+                                    .text_size(px(theme::TEXT_BODY))
+                                    .text_color(if is_selected {
+                                        theme::text_primary()
+                                    } else {
+                                        theme::content(0.9)
+                                    })
+                                    .font_weight(if entry.is_directory {
+                                        gpui::FontWeight::SEMIBOLD
+                                    } else {
+                                        gpui::FontWeight::NORMAL
+                                    })
+                                    .overflow_hidden()
+                                    .child(entry.name.clone()),
+                            ),
+                    )
+                    // Size
+                    .child(
+                        div()
+                            .w(px(100.))
+                            .text_right()
+                            .text_size(px(theme::TEXT_SMALL))
+                            .text_color(theme::text_muted())
+                            .child(entry.formatted_size()),
+                    )
+                    // Type
+                    .child(
+                        div()
+                            .w(px(130.))
+                            .px_2()
+                            .text_size(px(theme::TEXT_SMALL))
+                            .text_color(theme::text_faint())
+                            .overflow_hidden()
+                            .child(entry.type_description()),
+                    )
+                    // Modified
+                    .child(
+                        div()
+                            .w(px(140.))
+                            .text_size(px(theme::TEXT_SMALL))
+                            .text_color(theme::text_muted())
+                            .child(entry.formatted_modified()),
+                    )
+                    .into_any_element()
+            })
+            .collect()
+    }
+
+    fn render_grid_rows(
+        &mut self,
+        range: std::ops::Range<usize>,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
+        let cols = self.grid_cols.max(1);
+        let card_width = self.zoom;
+        let card_height = card_width + 36.;
+        let entries_count = self.filtered_indices.len();
+
+        range
+            .map(|row_idx| {
+                let start = row_idx * cols;
+                let end = (start + cols).min(entries_count);
+
+                div()
+                    .id(ElementId::from(format!("grid-row-{}", row_idx)))
+                    .w_full()
+                    .h(px(card_height + 8.))
+                    .px_3()
+                    .py_1()
+                    .flex()
+                    .gap_3()
+                    .children((start..end).map(|i| {
+                        let entry = &self.entries[self.filtered_indices[i]];
+                        let is_selected = self.selected_index == Some(i);
+                        let thumb_path = self.thumbnails.get_thumbnail_path(&entry.path, entry.content_type, entry.size);
+
+                        div()
+                            .id(ElementId::from(format!("grid-card-{}", i)))
+                            .w(px(card_width))
+                            .h(px(card_height))
+                            .p_2()
+                            .rounded(px(RADIUS_ROW))
+                            .bg(if is_selected { theme::selection_fill() } else { theme::card_fill() })
+                            .border_1()
+                            .border_color(if is_selected { theme::accent() } else { theme::border_color() })
+                            .cursor_pointer()
+                            .flex()
+                            .flex_col()
+                            .items_center()
+                            .justify_between()
+                            .when(!is_selected, |d| {
+                                d.hover(|s| s.bg(theme::hover_fill()).border_color(theme::border_subtle()))
+                            })
+                            .on_click(cx.listener(move |this, ev: &ClickEvent, _, cx| {
+                                if ev.click_count() >= 2 {
+                                    this.open_selected(cx);
+                                } else {
+                                    this.selected_index = Some(i);
+                                    cx.notify();
+                                }
+                            }))
+                            // Thumbnail / Icon Area
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .w_full()
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .overflow_hidden()
+                                    .child(match thumb_path {
+                                        Some(p) => img(p)
+                                            .max_w(px(card_width - 16.))
+                                            .max_h(px(card_width - 16.))
+                                            .rounded(px(RADIUS_THUMB))
+                                            .into_any_element(),
+                                        None => {
+                                            if entry.is_directory {
+                                                img("folder.svg")
+                                                    .size(px(card_width * 0.58))
+                                                    .into_any_element()
+                                            } else {
+                                                let icon_color = gpui::rgba(entry.icon_color_hex());
+                                                let badge = entry.format_badge();
+                                                div()
+                                                    .flex()
+                                                    .flex_col()
+                                                    .items_center()
+                                                    .justify_center()
+                                                    .gap_1p5()
+                                                    .child(
+                                                        icon(entry.icon_name, (card_width * 0.38).clamp(32., 54.))
+                                                            .text_color(icon_color)
+                                                    )
+                                                    .when_some(badge, |d, b| {
+                                                        d.child(
+                                                            div()
+                                                                .px_1p5()
+                                                                .py_0p5()
+                                                                .rounded(px(3.))
+                                                                .bg(icon_color.opacity(0.15))
+                                                                .border_1()
+                                                                .border_color(icon_color.opacity(0.3))
+                                                                .text_size(px(9.))
+                                                                .font_weight(gpui::FontWeight::BOLD)
+                                                                .text_color(icon_color)
+                                                                .child(b),
+                                                        )
+                                                    })
+                                                    .into_any_element()
+                                            }
+                                        }
+                                    }),
+                            )
+                            // Title & Info
+                            .child(
+                                div()
+                                    .w_full()
+                                    .flex()
+                                    .flex_col()
+                                    .items_center()
+                                    .child(
+                                        div()
+                                            .text_size(px(theme::TEXT_SMALL))
+                                            .text_color(if is_selected {
+                                                theme::text_primary()
+                                            } else {
+                                                theme::content(0.9)
+                                            })
+                                            .font_weight(if entry.is_directory {
+                                                gpui::FontWeight::SEMIBOLD
+                                            } else {
+                                                gpui::FontWeight::NORMAL
+                                            })
+                                            .max_w_full()
+                                            .overflow_hidden()
+                                            .child(entry.name.clone()),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(px(theme::TEXT_CAPTION))
+                                            .text_color(theme::text_faint())
+                                            .child(entry.formatted_size()),
+                                    ),
+                            )
+                            .into_any_element()
+                    }))
+                    .into_any_element()
+            })
+            .collect()
+    }
+
+    fn render_inspector(&self, cx: &mut Context<Self>) -> Div {
+        let selected_entry = self.selected_index.and_then(|i| self.entry_at(i));
+
+        div()
+            .w(px(270.))
+            .h_full()
+            .bg(theme::sidebar_fill())
+            .border_l_1()
+            .border_color(theme::border_color())
+            .p_4()
+            .flex()
+            .flex_col()
+            .gap_4()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .child(
+                        div()
+                            .text_size(px(theme::TEXT_HEADER))
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .text_color(theme::text_primary())
+                            .child("Properties"),
+                    )
+                    .child(icon("sliders", 14.).text_color(theme::text_faint())),
+            )
+            .child(match selected_entry {
+                Some(entry) => self.render_inspector_file(entry, cx).into_any_element(),
+                None => self.render_inspector_folder(cx).into_any_element(),
+            })
+    }
+
+    fn render_inspector_file(&self, entry: &FileEntry, cx: &mut Context<Self>) -> Div {
+        let path = entry.path.clone();
+        let thumb_path = self.thumbnails.get_thumbnail_path(&entry.path, entry.content_type, entry.size);
+
+        let preview_box = div()
+            .w_full()
+            .h(px(140.))
+            .bg(theme::card_fill())
+            .rounded(px(RADIUS_CARD))
+            .border_1()
+            .border_color(theme::border_color())
+            .flex()
+            .items_center()
+            .justify_center()
+            .overflow_hidden()
+            .child(match thumb_path {
+                Some(p) => img(p)
+                    .max_w(px(130.))
+                    .max_h(px(130.))
+                    .rounded(px(theme::RADIUS_THUMB))
+                    .into_any_element(),
+                None => {
+                    if entry.is_directory {
+                        img("folder.svg")
+                            .size(px(72.))
+                            .into_any_element()
+                    } else {
+                        icon(entry.icon_name, 64.)
+                            .text_color(theme::text_muted())
+                            .into_any_element()
+                    }
+                },
+            });
+
+        let file_name = div()
+            .text_size(px(theme::TEXT_TITLE))
+            .font_weight(gpui::FontWeight::BOLD)
+            .text_color(theme::text_primary())
+            .child(entry.name.clone());
+
+        let meta_list = div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(Self::meta_row("Size", &entry.formatted_size()))
+            .child(Self::meta_row("Type", &entry.type_description()))
+            .child(Self::meta_row("Modified", &entry.formatted_modified()))
+            .child(Self::meta_row("Permissions", &entry.formatted_permissions()))
+            .child(Self::meta_row("Location", &entry.path.parent().unwrap_or(&entry.path).to_string_lossy()));
+
+        let target_file = path.clone();
+        let target_term = path.clone();
+
+        let actions = div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .mt_auto()
+            .child(
+                button("inspector-btn-open", ButtonLook::Primary)
+                    .w_full()
+                    .on_click(cx.listener(move |_, _, _, _| {
+                        open_path(&target_file);
+                    }))
+                    .child("Open"),
+            )
+            .child(
+                button("inspector-btn-term", ButtonLook::Secondary)
+                    .w_full()
+                    .on_click(cx.listener(move |_, _, _, _| {
+                        open_in_terminal(&target_term);
+                    }))
+                    .child("Open in Terminal"),
+            );
+
+        div()
+            .flex_1()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .child(preview_box)
+            .child(file_name)
+            .child(meta_list)
+            .child(actions)
+    }
+
+    fn render_inspector_folder(&self, cx: &mut Context<Self>) -> Div {
+        let name = self.current_path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "/".to_string());
+
+        let free_space = crate::utils::get_disk_free_space(&self.current_path).unwrap_or_else(|| "Unknown".to_string());
+        let target_term = self.current_path.clone();
+
+        div()
+            .flex_1()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .child(
+                div()
+                    .w_full()
+                    .h(px(140.))
+                    .bg(theme::card_fill())
+                    .rounded(px(RADIUS_CARD))
+                    .border_1()
+                    .border_color(theme::border_color())
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(img("folder.svg").size(px(72.))),
+            )
+            .child(
+                div()
+                    .text_size(px(theme::TEXT_TITLE))
+                    .font_weight(gpui::FontWeight::BOLD)
+                    .text_color(theme::text_primary())
+                    .child(name),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(Self::meta_row("Type", "Directory"))
+                    .child(Self::meta_row("Disk Free", &format!("{} free", free_space)))
+                    .child(Self::meta_row("Path", &self.current_path.to_string_lossy())),
+            )
+            .child(
+                div()
+                    .mt_auto()
+                    .child(
+                        button("inspector-btn-term-folder", ButtonLook::Secondary)
+                            .w_full()
+                            .on_click(cx.listener(move |_, _, _, _| {
+                                open_in_terminal(&target_term);
+                            }))
+                            .child("Open in Terminal"),
+                    ),
+            )
+    }
+
+    fn meta_row(label: &'static str, value: &str) -> Div {
+        div()
+            .flex()
+            .justify_between()
+            .items_start()
+            .text_size(px(theme::TEXT_SMALL))
+            .child(
+                div()
+                    .text_color(theme::text_faint())
+                    .child(label),
+            )
+            .child(
+                div()
+                    .text_color(theme::text_primary())
+                    .max_w(px(160.))
+                    .overflow_hidden()
+                    .child(value.to_string()),
+            )
+    }
+}
+
+impl Render for MainWindow {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let total_items = self.filtered_indices.len();
+        let selected_size = self.selected_index.and_then(|idx| self.entry_at(idx)).map(|e| e.formatted_size());
+        let free_space = crate::utils::get_disk_free_space(&self.current_path).unwrap_or_else(|| "0 GB".to_string());
+        let focus_handle = self.focus_handle.clone();
+
+        // Dynamic responsive column calculation across pane width
+        let window_width = f32::from(window.viewport_size().width);
+        let sidebar_width = 220.0;
+        let inspector_width = if self.show_inspector { 270.0 } else { 0.0 };
+        let pane_width = (window_width - sidebar_width - inspector_width - 32.0).max(200.0);
+
+        let card_width = self.zoom;
+        let gap = 12.0;
+        let cols = ((pane_width + gap) / (card_width + gap)).floor().max(1.0) as usize;
+        self.grid_cols = cols;
+
+        let toolbar = self.render_header(cx);
+        let sidebar = self.render_sidebar(cx);
+        let inspector = if self.show_inspector {
+            Some(self.render_inspector(cx))
+        } else {
+            None
+        };
+        let pane = self.render_pane(cx);
+
+        // Bottom Status Bar
+        let status_bar = div()
+            .h(px(24.))
+            .px_3()
+            .bg(theme::shell_fill())
+            .border_t_1()
+            .border_color(theme::border_subtle())
+            .flex()
+            .items_center()
+            .justify_between()
+            .text_size(px(theme::TEXT_CAPTION))
+            .text_color(theme::text_faint())
+            .child(format!(
+                "{} items{}",
+                total_items,
+                if let Some(size) = selected_size {
+                    format!(" | 1 selected ({})", size)
+                } else {
+                    String::new()
+                }
+            ))
+            .child(format!("{} free", free_space));
+
+        // Keyboard & Scroll wheel handlers (Ctrl+Scroll for zooming)
+        div()
+            .id("shark-window-root")
+            .track_focus(&focus_handle)
+            .size_full()
+            .bg(theme::shell_fill())
+            .flex()
+            .flex_col()
+            .overflow_hidden()
+            .on_scroll_wheel(cx.listener(|this, ev: &ScrollWheelEvent, _, cx| {
+                if ev.modifiers.control {
+                    cx.stop_propagation();
+                    let delta = match ev.delta {
+                        gpui::ScrollDelta::Lines(l) => l.y,
+                        gpui::ScrollDelta::Pixels(p) => f32::from(p.y) / 20.,
+                    };
+                    if delta > 0. {
+                        this.zoom_in(cx);
+                    } else if delta < 0. {
+                        this.zoom_out(cx);
+                    }
+                }
+            }))
+            .on_key_down(cx.listener(|this, ev: &KeyDownEvent, _, cx| {
+                let key = ev.keystroke.key.as_str();
+                let modifiers = ev.keystroke.modifiers;
+
+                // 0. Command Palette Mode
+                if this.show_command_palette {
+                    let items = this.get_palette_items();
+                    match key {
+                        "escape" => {
+                            this.show_command_palette = false;
+                            this.command_palette_query.clear();
+                            cx.notify();
+                        }
+                        "enter" => {
+                            if !items.is_empty() {
+                                let idx = this.command_palette_selected.min(items.len().saturating_sub(1));
+                                let action = items[idx].action.clone();
+                                this.execute_palette_action(action, cx);
+                            }
+                        }
+                        "up" => {
+                            if !items.is_empty() {
+                                let prev = if this.command_palette_selected == 0 {
+                                    items.len().saturating_sub(1)
+                                } else {
+                                    this.command_palette_selected - 1
+                                };
+                                this.command_palette_selected = prev;
+                                cx.notify();
+                            }
+                        }
+                        "down" => {
+                            if !items.is_empty() {
+                                let next = (this.command_palette_selected + 1) % items.len();
+                                this.command_palette_selected = next;
+                                cx.notify();
+                            }
+                        }
+                        "backspace" => {
+                            this.command_palette_query.pop();
+                            this.command_palette_selected = 0;
+                            cx.notify();
+                        }
+                        _ => {
+                            if modifiers.control {
+                                match key {
+                                    "n" => { this.execute_palette_action(PaletteAction::NewFolder, cx); return; }
+                                    "v" => { this.execute_palette_action(PaletteAction::ToggleViewMode, cx); return; }
+                                    "h" => { this.execute_palette_action(PaletteAction::ToggleHidden, cx); return; }
+                                    "i" => { this.execute_palette_action(PaletteAction::ToggleInspector, cx); return; }
+                                    "t" => { this.execute_palette_action(PaletteAction::OpenTerminal, cx); return; }
+                                    "," => { this.execute_palette_action(PaletteAction::OpenSettings, cx); return; }
+                                    "r" => { this.execute_palette_action(PaletteAction::Refresh, cx); return; }
+                                    _ => {}
+                                }
+                            } else if !modifiers.platform && !modifiers.alt {
+                                if let Some(ch) = &ev.keystroke.key_char {
+                                    this.command_palette_query.push_str(ch);
+                                    this.command_palette_selected = 0;
+                                    cx.notify();
+                                } else if key.chars().count() == 1 {
+                                    this.command_palette_query.push_str(key);
+                                    this.command_palette_selected = 0;
+                                    cx.notify();
+                                }
+                            }
+                        }
+                    }
+                    return;
+                }
+
+                // Global Shortcuts
+                if modifiers.control && (key == "k" || key == "p" || key == "f") || (key == "/" && !this.path_editing) {
+                    this.show_command_palette = true;
+                    this.command_palette_query.clear();
+                    this.command_palette_selected = 0;
+                    cx.notify();
+                    return;
+                }
+                if modifiers.control && key == "l" {
+                    this.path_editing = true;
+                    this.search_active = false;
+                    this.path_input_text = this.current_path.to_string_lossy().to_string();
+                    cx.notify();
+                    return;
+                }
+                if modifiers.control && key == "h" {
+                    this.show_hidden = !this.show_hidden;
+                    this.sort_and_filter();
+                    cx.notify();
+                    return;
+                }
+                if (modifiers.alt && key == "up") || (key == "backspace" && !this.search_active && !this.path_editing) {
+                    this.go_up(cx);
+                    return;
+                }
+                if modifiers.alt && key == "left" {
+                    this.go_back(cx);
+                    return;
+                }
+                if modifiers.alt && key == "right" {
+                    this.go_forward(cx);
+                    return;
+                }
+
+                // 1. Path URL Editing Mode
+                if this.path_editing {
+                    match key {
+                        "escape" => {
+                            this.path_editing = false;
+                            cx.notify();
+                        }
+                        "enter" => {
+                            this.commit_path_input(cx);
+                        }
+                        "backspace" => {
+                            this.path_input_text.pop();
+                            cx.notify();
+                        }
+                        _ => {
+                            if !modifiers.control && !modifiers.platform && !modifiers.alt {
+                                if let Some(ch) = &ev.keystroke.key_char {
+                                    this.path_input_text.push_str(ch);
+                                    cx.notify();
+                                } else if key.chars().count() == 1 {
+                                    this.path_input_text.push_str(key);
+                                    cx.notify();
+                                }
+                            }
+                        }
+                    }
+                    return;
+                }
+
+                // 2. Normal File View Mode
+                match key {
+                    "up" => {
+                        let prev = this.selected_index.map(|i| i.saturating_sub(1)).unwrap_or(0);
+                        this.selected_index = Some(prev);
+                        cx.notify();
+                    }
+                    "down" => {
+                        let max = this.filtered_indices.len().saturating_sub(1);
+                        let next = this.selected_index.map(|i| (i + 1).min(max)).unwrap_or(0);
+                        this.selected_index = Some(next);
+                        cx.notify();
+                    }
+                    "enter" => {
+                        this.open_selected(cx);
+                    }
+                    "escape" => {
+                        this.selected_index = None;
+                        this.show_settings_modal = false;
+                        this.show_command_palette = false;
+                        this.search_query.clear();
+                        this.sort_and_filter();
+                        cx.notify();
+                    }
+                    _ => {
+                        // Type-to-search anywhere in the window
+                        if !modifiers.control && !modifiers.platform && !modifiers.alt {
+                            if let Some(ch) = &ev.keystroke.key_char {
+                                if !ch.trim().is_empty() {
+                                    this.show_command_palette = true;
+                                    this.command_palette_query.push_str(ch);
+                                    this.command_palette_selected = 0;
+                                    cx.notify();
+                                }
+                            } else if key.chars().count() == 1 && !key.trim().is_empty() {
+                                this.show_command_palette = true;
+                                this.command_palette_query.push_str(key);
+                                this.command_palette_selected = 0;
+                                cx.notify();
+                            }
+                        }
+                    }
+                }
+            }))
+            .child(toolbar)
+                        .child(
+                div()
+                    .flex_1()
+                    .flex()
+                    .overflow_hidden()
+                    .child(sidebar)
+                    .child(pane)
+                    .children(inspector),
+            )
+            .child(status_bar)
+                        .when(self.show_settings_modal, |d| {
+                d.child(self.render_settings_modal(cx))
+            })
+            .when(self.show_command_palette, |d| {
+                d.child(self.render_command_palette(cx))
+            })
+    }
+}
