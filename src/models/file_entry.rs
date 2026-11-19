@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 /// File entry representing a file or directory with cached metadata.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileEntry {
     pub name: String,
     pub name_lower: String,
@@ -15,72 +15,14 @@ pub struct FileEntry {
     pub size: u64,
     pub modified: Option<SystemTime>,
     pub created: Option<SystemTime>,
-    pub content_type: String,
-    pub icon_name: String,
+    pub content_type: &'static str,
+    pub icon_name: &'static str,
     pub permissions: u32,
     pub owner: String,
     pub group: String,
 }
 
 impl FileEntry {
-    /// Create a FileEntry from GIO FileInfo.
-    pub fn from_file_info(path: PathBuf, info: &gio::FileInfo) -> Self {
-        let name = info.display_name().to_string();
-        let file_type = info.file_type();
-        let is_directory = file_type == gio::FileType::Directory;
-        let is_symlink = info.is_symlink();
-        let is_hidden = info.is_hidden() || name.starts_with('.');
-        let size = if is_directory { 0 } else { info.size() as u64 };
-
-        let modified = info.modification_date_time().map(|dt| {
-            let unix = dt.to_unix();
-            if unix >= 0 {
-                SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(unix as u64)
-            } else {
-                SystemTime::UNIX_EPOCH
-            }
-        });
-
-        let created_secs = info.attribute_uint64(gio::FILE_ATTRIBUTE_TIME_CREATED);
-        let created = if created_secs > 0 {
-            Some(SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(created_secs))
-        } else {
-            None
-        };
-
-        let content_type = info.content_type().map(|c| c.to_string()).unwrap_or_else(|| {
-            if is_directory {
-                "inode/directory".to_string()
-            } else {
-                "application/octet-stream".to_string()
-            }
-        });
-
-        let name_lower = name.to_lowercase();
-        let icon_name = Self::determine_icon(&content_type, is_directory, is_symlink, &name);
-
-        let permissions = info.attribute_uint32(gio::FILE_ATTRIBUTE_UNIX_MODE);
-        let owner = info.attribute_string(gio::FILE_ATTRIBUTE_OWNER_USER).unwrap_or_default().to_string();
-        let group = info.attribute_string(gio::FILE_ATTRIBUTE_OWNER_GROUP).unwrap_or_default().to_string();
-
-        Self {
-            name,
-            name_lower,
-            path,
-            is_directory,
-            is_symlink,
-            is_hidden,
-            size,
-            modified,
-            created,
-            content_type,
-            icon_name,
-            permissions,
-            owner,
-            group,
-        }
-    }
-
     /// Create a FileEntry directly from a native DirEntry using cached kernel d_type.
     pub fn from_dir_entry(entry: &std::fs::DirEntry) -> std::io::Result<Self> {
         let path = entry.path();
@@ -118,7 +60,7 @@ impl FileEntry {
 
         let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
         let content_type = if is_directory {
-            "inode/directory".to_string()
+            "inode/directory"
         } else {
             Self::guess_content_type(ext)
         };
@@ -152,7 +94,8 @@ impl FileEntry {
         let meta = std::fs::metadata(&path).unwrap_or_else(|_| symlink_meta.clone());
         let is_directory = meta.is_dir();
 
-        let name = path.file_name()
+        let name = path
+            .file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| "/".to_string());
 
@@ -164,7 +107,7 @@ impl FileEntry {
 
         let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
         let content_type = if is_directory {
-            "inode/directory".to_string()
+            "inode/directory"
         } else {
             Self::guess_content_type(ext)
         };
@@ -197,68 +140,125 @@ impl FileEntry {
         })
     }
 
-    /// Guess MIME content type from file extension.
-    pub fn guess_content_type(ext: &str) -> String {
+    /// Guess MIME content type from file extension as a zero-allocation static string.
+    pub fn guess_content_type(ext: &str) -> &'static str {
         match ext.to_lowercase().as_str() {
             "png" => "image/png",
             "jpg" | "jpeg" => "image/jpeg",
             "gif" => "image/gif",
             "webp" => "image/webp",
             "svg" => "image/svg+xml",
+            "ico" | "bmp" => "image/x-icon",
             "mp4" | "mkv" | "webm" | "avi" | "mov" => "video/mp4",
             "mp3" | "flac" | "ogg" | "wav" | "m4a" => "audio/mpeg",
             "pdf" => "application/pdf",
-            "txt" | "md" | "rst" | "log" => "text/plain",
+            "txt" | "rst" => "text/plain",
+            "log" => "text/x-log",
+            "md" | "markdown" => "text/markdown",
+            "csv" | "tsv" | "xls" | "xlsx" => "text/csv",
+            "html" | "htm" => "text/html",
+            "xml" | "netxml" | "kml" => "application/xml",
+            "cap" | "pcap" | "pcapng" => "application/vnd.tcpdump.pcap",
             "rs" => "text/x-rust",
             "py" => "text/x-python",
             "c" | "h" => "text/x-c",
             "cpp" | "hpp" | "cc" => "text/x-c++",
-            "js" | "mjs" | "ts" => "application/javascript",
-            "html" | "htm" => "text/html",
-            "css" => "text/css",
+            "js" | "mjs" | "ts" | "tsx" | "jsx" => "application/javascript",
+            "css" | "scss" | "sass" | "less" => "text/css",
             "json" => "application/json",
             "toml" => "application/toml",
             "yaml" | "yml" => "application/yaml",
-            "xml" => "application/xml",
+            "sql" | "sqlite" | "db" => "application/x-sqlite3",
             "zip" => "application/zip",
-            "tar" | "gz" | "xz" | "bz2" | "zst" | "7z" => "application/x-archive",
+            "tar" | "gz" | "xz" | "bz2" | "zst" | "7z" | "rar" => "application/x-archive",
             "sh" | "bash" | "zsh" => "application/x-shellscript",
             "iso" => "application/x-cd-image",
             _ => "application/octet-stream",
-        }.to_string()
+        }
     }
 
-    /// Determine icon name for this entry.
-    pub fn determine_icon(content_type: &str, is_dir: bool, _is_symlink: bool, filename: &str) -> String {
+    /// Determine SVG icon name in assets/icons/ for this entry.
+    pub fn determine_icon(content_type: &str, is_dir: bool, _is_symlink: bool, filename: &str) -> &'static str {
         if is_dir {
-            // Check special folder names
-            match filename.to_lowercase().as_str() {
-                "desktop" => "user-desktop",
-                "documents" => "folder-documents",
-                "downloads" => "folder-download",
-                "music" => "folder-music",
-                "pictures" => "folder-pictures",
-                "videos" => "folder-videos",
-                _ => "folder",
-            }.to_string()
+            "folder"
+        } else if content_type == "application/pdf" || filename.to_lowercase().ends_with(".pdf") {
+            "pdf"
         } else if content_type.starts_with("image/") {
-            "image-x-generic".to_string()
+            "image"
         } else if content_type.starts_with("video/") {
-            "video-x-generic".to_string()
+            "video"
         } else if content_type.starts_with("audio/") {
-            "audio-x-generic".to_string()
-        } else if content_type == "application/pdf" {
-            "application-pdf".to_string()
+            "audio"
         } else if content_type.contains("archive") || content_type.contains("zip") || content_type.contains("tar") {
-            "package-x-generic".to_string()
-        } else if content_type.starts_with("text/x-") || content_type.contains("javascript") || content_type.contains("json") {
-            "text-x-script".to_string()
-        } else if content_type.starts_with("text/") {
-            "text-x-generic".to_string()
-        } else if content_type.contains("executable") || content_type.contains("shellscript") {
-            "application-x-executable".to_string()
+            "archive"
+        } else if content_type == "text/csv" || filename.to_lowercase().ends_with(".csv") || filename.to_lowercase().ends_with(".tsv") {
+            "table"
+        } else if content_type == "text/html" || filename.to_lowercase().ends_with(".html") || filename.to_lowercase().ends_with(".htm") {
+            "globe"
+        } else if content_type == "application/xml" || filename.to_lowercase().ends_with(".xml") || filename.to_lowercase().ends_with(".netxml") {
+            "globe"
+        } else if content_type == "application/vnd.tcpdump.pcap" || filename.to_lowercase().ends_with(".cap") || filename.to_lowercase().ends_with(".pcap") {
+            "cpu"
+        } else if content_type == "text/x-log" || filename.to_lowercase().ends_with(".log") {
+            "terminal"
+        } else if content_type == "application/x-sqlite3" || filename.to_lowercase().ends_with(".sql") || filename.to_lowercase().ends_with(".db") {
+            "database"
+        } else if content_type == "text/markdown" || filename.to_lowercase().ends_with(".md") {
+            "book"
+        } else if content_type.starts_with("text/x-") || content_type.contains("javascript") || content_type.contains("json") || content_type.contains("toml") || content_type.contains("yaml") {
+            "code"
+        } else if content_type.starts_with("text/") || filename.to_lowercase().ends_with(".txt") {
+            "file-text"
         } else {
-            "text-x-generic".to_string()
+            "file"
+        }
+    }
+
+    /// Color accent for file icon representation (ARGB hex).
+    pub fn icon_color_hex(&self) -> u32 {
+        if self.is_directory {
+            0x38bdf8ff // Sky / Cyan
+        } else {
+            match self.icon_name {
+                "table" => 0x34d399ff,     // Emerald green for CSV / TSV / Excel
+                "globe" => 0xfb923cff,     // Orange for HTML / XML / Web
+                "cpu" => 0x818cf8ff,       // Indigo for CAP / PCAP / Binaries
+                "terminal" => 0x06b6d4ff,  // Cyan for Logs / Scripts
+                "code" => 0x60a5faff,      // Blue for Rust / Py / JS / TS / JSON
+                "book" => 0xa78bfaff,      // Purple for Markdown / Docs
+                "file-text" => 0x94a3b8ff, // Slate gray for Text / Notes
+                "pdf" => 0xf87171ff,       // Red for PDF
+                "image" => 0xf472b6ff,     // Pink for Images
+                "video" => 0xc084fcff,     // Purple for Videos
+                "audio" => 0xe879f9ff,     // Fuchsia for Audio
+                "archive" => 0xfbbf24ff,   // Amber for ZIP / TAR / GZ
+                "database" => 0x2dd4bfff,  // Teal for SQL / DB
+                _ => 0x94a3b8ff,
+            }
+        }
+    }
+
+    /// Short format badge for grid card display (e.g. CSV, HTML, TXT, LOG).
+    pub fn format_badge(&self) -> Option<String> {
+        if self.is_directory {
+            return None;
+        }
+        if let Some(ext) = self.path.extension().and_then(|e| e.to_str()) {
+            if ext.len() <= 5 {
+                return Some(ext.to_uppercase());
+            }
+        }
+        match self.icon_name {
+            "table" => Some("CSV".to_string()),
+            "globe" => Some("WEB".to_string()),
+            "cpu" => Some("BIN".to_string()),
+            "terminal" => Some("LOG".to_string()),
+            "code" => Some("CODE".to_string()),
+            "book" => Some("DOC".to_string()),
+            "file-text" => Some("TXT".to_string()),
+            "pdf" => Some("PDF".to_string()),
+            "archive" => Some("ZIP".to_string()),
+            _ => None,
         }
     }
 

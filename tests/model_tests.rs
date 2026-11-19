@@ -20,15 +20,15 @@ fn test_format_permissions() {
 
 #[test]
 fn test_determine_icon() {
-    assert_eq!(FileEntry::determine_icon("inode/directory", true, false, "Documents"), "folder-documents");
-    assert_eq!(FileEntry::determine_icon("inode/directory", true, false, "Downloads"), "folder-download");
+    assert_eq!(FileEntry::determine_icon("inode/directory", true, false, "Documents"), "folder");
+    assert_eq!(FileEntry::determine_icon("inode/directory", true, false, "Downloads"), "folder");
     assert_eq!(FileEntry::determine_icon("inode/directory", true, false, "some_folder"), "folder");
-    assert_eq!(FileEntry::determine_icon("image/png", false, false, "photo.png"), "image-x-generic");
-    assert_eq!(FileEntry::determine_icon("video/mp4", false, false, "movie.mp4"), "video-x-generic");
-    assert_eq!(FileEntry::determine_icon("application/pdf", false, false, "doc.pdf"), "application-pdf");
-    assert_eq!(FileEntry::determine_icon("application/zip", false, false, "archive.zip"), "package-x-generic");
-    assert_eq!(FileEntry::determine_icon("audio/mpeg", false, false, "song.mp3"), "audio-x-generic");
-    assert_eq!(FileEntry::determine_icon("text/x-rust", false, false, "main.rs"), "text-x-script");
+    assert_eq!(FileEntry::determine_icon("image/png", false, false, "photo.png"), "image");
+    assert_eq!(FileEntry::determine_icon("video/mp4", false, false, "movie.mp4"), "video");
+    assert_eq!(FileEntry::determine_icon("application/pdf", false, false, "doc.pdf"), "pdf");
+    assert_eq!(FileEntry::determine_icon("application/zip", false, false, "archive.zip"), "archive");
+    assert_eq!(FileEntry::determine_icon("audio/mpeg", false, false, "song.mp3"), "audio");
+    assert_eq!(FileEntry::determine_icon("text/x-rust", false, false, "main.rs"), "code");
 }
 
 #[test]
@@ -69,8 +69,8 @@ fn test_sorting_entries() {
             permissions: 0o644,
             owner: "user".to_string(),
             group: "user".to_string(),
-            icon_name: "text-x-generic".to_string(),
-            content_type: "text/plain".to_string(),
+            icon_name: "text-x-generic",
+            content_type: "text/plain",
         },
         FileEntry {
             name: "alpha.png".to_string(),
@@ -85,8 +85,8 @@ fn test_sorting_entries() {
             permissions: 0o644,
             owner: "user".to_string(),
             group: "user".to_string(),
-            icon_name: "image-x-generic".to_string(),
-            content_type: "image/png".to_string(),
+            icon_name: "image-x-generic",
+            content_type: "image/png",
         },
         FileEntry {
             name: "Folder B".to_string(),
@@ -101,8 +101,8 @@ fn test_sorting_entries() {
             permissions: 0o755,
             owner: "user".to_string(),
             group: "user".to_string(),
-            icon_name: "folder".to_string(),
-            content_type: "inode/directory".to_string(),
+            icon_name: "folder",
+            content_type: "inode/directory",
         },
     ];
 
