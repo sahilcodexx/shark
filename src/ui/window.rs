@@ -9,7 +9,7 @@ use crate::theme::{self, button, icon, icon_button, ButtonLook, RADIUS_CARD, RAD
 use crate::thumbnails::ThumbnailCache;
 use gpui::{
     actions, div, img, prelude::*, px, uniform_list, AnyElement, ClickEvent, Context, Div, ElementId,
-    FocusHandle, Hsla, IntoElement, KeyDownEvent, Render, ScrollWheelEvent, UniformListScrollHandle,
+    FocusHandle, Hsla, IntoElement, KeyDownEvent, Render, ScrollWheelEvent, SharedString, UniformListScrollHandle,
     Window,
 };
 use std::path::{Path, PathBuf};
@@ -2125,8 +2125,7 @@ impl MainWindow {
                 } else {
                     None
                 };
-                let icon_color = gpui::rgba(entry.icon_color_hex());
-                let badge = entry.format_badge();
+
                 let parent_folder = entry.path.parent()
                     .and_then(|p| p.file_name())
                     .map(|n| n.to_string_lossy().to_string())
@@ -2169,25 +2168,15 @@ impl MainWindow {
                                             .into_any_element(),
                                         None => div()
                                             .flex()
-                                            .flex_col()
                                             .items_center()
-                                            .gap_2p5()
-                                            .child(icon(entry.icon_name, 64.).text_color(icon_color))
-                                            .when_some(badge, |d, b| {
-                                                d.child(
-                                                    div()
-                                                        .px_2()
-                                                        .py_0p5()
-                                                        .rounded(px(4.))
-                                                        .bg(icon_color.opacity(0.15))
-                                                        .border_1()
-                                                        .border_color(icon_color.opacity(0.3))
-                                                        .text_size(px(10.))
-                                                        .font_weight(gpui::FontWeight::BOLD)
-                                                        .text_color(icon_color)
-                                                        .child(b),
-                                                )
-                                            })
+                                            .justify_center()
+                                            .child(
+                                                if entry.is_directory {
+                                                    img("folder.svg").size(px(72.)).into_any_element()
+                                                } else {
+                                                    img(SharedString::from(format!("{}.svg", entry.icon_name))).size(px(72.)).into_any_element()
+                                                }
+                                            )
                                             .into_any_element(),
                                     }),
                             )
@@ -2909,11 +2898,11 @@ impl MainWindow {
                                 None => {
                                     if entry.is_directory {
                                         img("folder.svg")
-                                            .size(px(20.))
+                                            .size(px(18.))
                                             .into_any_element()
                                     } else {
-                                        icon(entry.icon_name, 16.)
-                                            .text_color(gpui::rgba(entry.icon_color_hex()))
+                                        img(SharedString::from(format!("{}.svg", entry.icon_name)))
+                                            .size(px(18.))
                                             .into_any_element()
                                     }
                                 }
@@ -3049,35 +3038,8 @@ impl MainWindow {
                                                     .size(px((thumb_area_height * 0.85).clamp(24., 64.)))
                                                     .into_any_element()
                                             } else {
-                                                let icon_color = gpui::rgba(entry.icon_color_hex());
-                                                let badge = entry.format_badge();
-                                                div()
-                                                    .flex()
-                                                    .flex_col()
-                                                    .items_center()
-                                                    .justify_center()
-                                                    .gap_1()
-                                                    .child(
-                                                        icon(entry.icon_name, (thumb_area_height * 0.65).clamp(20., 48.))
-                                                            .text_color(icon_color)
-                                                    )
-                                                    .when(!is_compact, |d| {
-                                                        d.when_some(badge, |d, b| {
-                                                            d.child(
-                                                                div()
-                                                                    .px_1p5()
-                                                                    .py_0p5()
-                                                                    .rounded(px(3.))
-                                                                    .bg(icon_color.opacity(0.15))
-                                                                    .border_1()
-                                                                    .border_color(icon_color.opacity(0.3))
-                                                                    .text_size(px(9.))
-                                                                    .font_weight(gpui::FontWeight::BOLD)
-                                                                    .text_color(icon_color)
-                                                                    .child(b),
-                                                            )
-                                                        })
-                                                    })
+                                                img(SharedString::from(format!("{}.svg", entry.icon_name)))
+                                                    .size(px((thumb_area_height * 0.8).clamp(24., 64.)))
                                                     .into_any_element()
                                             }
                                         }
@@ -3189,8 +3151,8 @@ impl MainWindow {
                             .size(px(72.))
                             .into_any_element()
                     } else {
-                        icon(entry.icon_name, 64.)
-                            .text_color(theme.text_muted)
+                        img(SharedString::from(format!("{}.svg", entry.icon_name)))
+                            .size(px(72.))
                             .into_any_element()
                     }
                 },
