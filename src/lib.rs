@@ -6,6 +6,7 @@ pub mod config;
 pub mod filesystem;
 pub mod models;
 pub mod navigation;
+pub mod platform;
 pub mod theme;
 pub mod thumbnails;
 pub mod ui;

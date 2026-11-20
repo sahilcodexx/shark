@@ -30,10 +30,16 @@ impl SharkApp {
                 size: size(px(width.max(800.)), px(height.max(550.))),
             });
 
+            let is_frosted = config.background_mode != "solid";
+
             let options = WindowOptions {
                 window_bounds: Some(bounds),
                 window_min_size: Some(size(px(320.), px(240.))),
-                window_background: WindowBackgroundAppearance::Opaque,
+                window_background: if is_frosted {
+                    WindowBackgroundAppearance::Transparent
+                } else {
+                    WindowBackgroundAppearance::Opaque
+                },
                 app_id: Some("shark".into()),
                 titlebar: Some(TitlebarOptions {
                     title: Some("Shark".into()),
@@ -44,8 +50,21 @@ impl SharkApp {
                 ..Default::default()
             };
 
-            cx.open_window(options, move |_, cx| {
-                cx.new(|cx| MainWindow::new(initial_path, cx))
+            cx.open_window(options, move |window, cx| {
+                window.set_app_id("shark");
+                let coordinator = if is_frosted {
+                    let c = crate::platform::PlatformBlurCoordinator::try_init(
+                        window,
+                        width as i32,
+                        height as i32,
+                    );
+                    log::info!("Platform blur coordinator initialized: {:?}", c.status());
+                    Some(c)
+                } else {
+                    None
+                };
+
+                cx.new(|cx| MainWindow::new(initial_path, coordinator, cx))
             })
             .expect("Failed to open Shark window");
 

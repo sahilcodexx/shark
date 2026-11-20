@@ -66,67 +66,127 @@ pub struct ThemeColors {
 }
 
 impl ThemeColors {
-    pub fn light() -> Self {
-        Self {
-            is_dark: false,
-            canvas: rgb(0xf2f2f5).into(),
-            pane: rgb(0xffffff).into(), // Pure crisp white for main file browser
-            card: rgb(0xffffff).into(),
-            card_border: rgb(0xe5e5ea).into(),
-            card_hover: rgb(0xf3f4f6).into(),
-            sidebar: rgb(0xf0f0f3).into(), // macOS light gray floating sidebar
-            sidebar_border: rgb(0xdcdce2).into(),
-            topbar: rgb(0xf6f6f8).into(),
-            topbar_border: rgb(0xe5e5ea).into(),
-            text_primary: rgb(0x1d1d1f).into(),
-            text_muted: rgb(0x5c5c62).into(),
-            text_faint: rgb(0x8e8e93).into(),
-            accent: rgb(0x007aff).into(), // Apple system blue
-            selection: gpui::rgba(0x007aff20).into(),
-            button_fill: rgb(0xffffff).into(),
-            button_border: rgb(0xdcdce2).into(),
-            button_hover: rgb(0xf0f0f4).into(),
-            search_fill: rgb(0xe8e8ed).into(),
-            search_border: rgb(0xd8d8de).into(),
-            sidebar_hover: rgb(0xe9e9ef).into(),
-            sidebar_selected: rgb(0xdcdce2).into(),
-            surface_border: rgb(0xe2e2e8).into(),
-            shadow_soft: gpui::rgba(0x00000014).into(),
-            shadow_panel: gpui::rgba(0x00000024).into(),
+    pub fn light(is_frosted: bool) -> Self {
+        if is_frosted {
+            Self {
+                is_dark: false,
+                canvas: gpui::rgba(0xf4f5f8c0).into(), // ~75% translucent frosted mist
+                pane: gpui::rgba(0xffffff00).into(),
+                card: gpui::rgba(0xffffffea).into(),
+                card_border: gpui::rgba(0x0000001e).into(),
+                card_hover: gpui::rgba(0x00000010).into(),
+                sidebar: gpui::rgba(0xedeff499).into(), // ~60% translucent floating sidebar
+                sidebar_border: gpui::rgba(0x00000018).into(),
+                topbar: gpui::rgba(0xf6f6f800).into(),
+                topbar_border: gpui::rgba(0x00000015).into(),
+                text_primary: rgb(0x1d1d1f).into(),
+                text_muted: rgb(0x5c5c62).into(),
+                text_faint: rgb(0x8e8e93).into(),
+                accent: rgb(0x007aff).into(),
+                selection: gpui::rgba(0x007aff28).into(),
+                button_fill: gpui::rgba(0xffffffc8).into(),
+                button_border: gpui::rgba(0x00000018).into(),
+                button_hover: gpui::rgba(0x00000010).into(),
+                search_fill: gpui::rgba(0x00000010).into(),
+                search_border: gpui::rgba(0x00000016).into(),
+                sidebar_hover: gpui::rgba(0x00000012).into(),
+                sidebar_selected: gpui::rgba(0x007aff24).into(),
+                surface_border: gpui::rgba(0x00000016).into(),
+                shadow_soft: gpui::rgba(0x00000014).into(),
+                shadow_panel: gpui::rgba(0x00000024).into(),
+            }
+        } else {
+            Self {
+                is_dark: false,
+                canvas: rgb(0xf2f2f5).into(),
+                pane: rgb(0xffffff).into(), // Pure crisp white for main file browser
+                card: rgb(0xffffff).into(),
+                card_border: rgb(0xe5e5ea).into(),
+                card_hover: rgb(0xf3f4f6).into(),
+                sidebar: rgb(0xf0f0f3).into(), // macOS light gray floating sidebar
+                sidebar_border: rgb(0xdcdce2).into(),
+                topbar: rgb(0xf6f6f8).into(),
+                topbar_border: rgb(0xe5e5ea).into(),
+                text_primary: rgb(0x1d1d1f).into(),
+                text_muted: rgb(0x5c5c62).into(),
+                text_faint: rgb(0x8e8e93).into(),
+                accent: rgb(0x007aff).into(), // Apple system blue
+                selection: gpui::rgba(0x007aff20).into(),
+                button_fill: rgb(0xffffff).into(),
+                button_border: rgb(0xdcdce2).into(),
+                button_hover: rgb(0xf0f0f4).into(),
+                search_fill: rgb(0xe8e8ed).into(),
+                search_border: rgb(0xd8d8de).into(),
+                sidebar_hover: rgb(0xe9e9ef).into(),
+                sidebar_selected: rgb(0xdcdce2).into(),
+                surface_border: rgb(0xe2e2e8).into(),
+                shadow_soft: gpui::rgba(0x00000014).into(),
+                shadow_panel: gpui::rgba(0x00000024).into(),
+            }
         }
     }
 
-    pub fn dark() -> Self {
-        Self {
-            is_dark: true,
-            canvas: rgb(0x141418).into(),
-            pane: rgb(0x1c1c22).into(), // Solid rich dark background
-            card: rgb(0x24242c).into(),
-            card_border: rgb(0x31313c).into(),
-            card_hover: rgb(0x2a2a34).into(),
-            sidebar: rgb(0x18181e).into(), // Solid dark sidebar
-            sidebar_border: rgb(0x282832).into(),
-            topbar: rgb(0x22222a).into(),
-            topbar_border: rgb(0x2e2e3a).into(),
-            text_primary: rgb(0xf5f5f7).into(),
-            text_muted: rgb(0xa1a1a6).into(),
-            text_faint: rgb(0x6e6e73).into(),
-            accent: rgb(0x0a84ff).into(),
-            selection: gpui::rgba(0x0a84ff35).into(),
-            button_fill: rgb(0x282832).into(),
-            button_border: rgb(0x383844).into(),
-            button_hover: rgb(0x32323e).into(),
-            search_fill: rgb(0x282832).into(),
-            search_border: rgb(0x383844).into(),
-            sidebar_hover: rgb(0x23232c).into(),
-            sidebar_selected: rgb(0x2e2e38).into(),
-            surface_border: rgb(0x33333d).into(),
-            shadow_soft: gpui::rgba(0x00000055).into(),
-            shadow_panel: gpui::rgba(0x00000066).into(),
+    pub fn dark(is_frosted: bool) -> Self {
+        if is_frosted {
+            Self {
+                is_dark: true,
+                canvas: gpui::rgba(0x141620cc).into(), // ~80% translucent smoky obsidian glass
+                pane: gpui::rgba(0x1c1c2200).into(),
+                card: gpui::rgba(0x1e212deb).into(),
+                card_border: gpui::rgba(0xffffff22).into(),
+                card_hover: gpui::rgba(0xffffff15).into(),
+                sidebar: gpui::rgba(0x181b26a0).into(), // ~63% translucent floating sidebar
+                sidebar_border: gpui::rgba(0xffffff1c).into(),
+                topbar: gpui::rgba(0x22222a00).into(),
+                topbar_border: gpui::rgba(0xffffff18).into(),
+                text_primary: rgb(0xf5f5f7).into(),
+                text_muted: rgb(0xa1a1a6).into(),
+                text_faint: rgb(0x6e6e73).into(),
+                accent: rgb(0x0a84ff).into(),
+                selection: gpui::rgba(0x0a84ff35).into(),
+                button_fill: gpui::rgba(0x262a39b8).into(),
+                button_border: gpui::rgba(0xffffff20).into(),
+                button_hover: gpui::rgba(0xffffff18).into(),
+                search_fill: gpui::rgba(0xffffff14).into(),
+                search_border: gpui::rgba(0xffffff1a).into(),
+                sidebar_hover: gpui::rgba(0xffffff15).into(),
+                sidebar_selected: gpui::rgba(0x0a84ff30).into(),
+                surface_border: gpui::rgba(0xffffff1a).into(),
+                shadow_soft: gpui::rgba(0x00000055).into(),
+                shadow_panel: gpui::rgba(0x00000066).into(),
+            }
+        } else {
+            Self {
+                is_dark: true,
+                canvas: rgb(0x141418).into(),
+                pane: rgb(0x1c1c22).into(), // Solid rich dark background
+                card: rgb(0x24242c).into(),
+                card_border: rgb(0x31313c).into(),
+                card_hover: rgb(0x2a2a34).into(),
+                sidebar: rgb(0x18181e).into(), // Solid dark sidebar
+                sidebar_border: rgb(0x282832).into(),
+                topbar: rgb(0x22222a).into(),
+                topbar_border: rgb(0x2e2e3a).into(),
+                text_primary: rgb(0xf5f5f7).into(),
+                text_muted: rgb(0xa1a1a6).into(),
+                text_faint: rgb(0x6e6e73).into(),
+                accent: rgb(0x0a84ff).into(),
+                selection: gpui::rgba(0x0a84ff35).into(),
+                button_fill: rgb(0x282832).into(),
+                button_border: rgb(0x383844).into(),
+                button_hover: rgb(0x32323e).into(),
+                search_fill: rgb(0x282832).into(),
+                search_border: rgb(0x383844).into(),
+                sidebar_hover: rgb(0x23232c).into(),
+                sidebar_selected: rgb(0x2e2e38).into(),
+                surface_border: rgb(0x33333d).into(),
+                shadow_soft: gpui::rgba(0x00000055).into(),
+                shadow_panel: gpui::rgba(0x00000066).into(),
+            }
         }
     }
 
-    pub fn resolve(mode: ThemeMode, window: &Window) -> Self {
+    pub fn resolve(mode: ThemeMode, window: &Window, background_mode: &str) -> Self {
         let is_dark = match mode {
             ThemeMode::Light => false,
             ThemeMode::Dark => true,
@@ -135,10 +195,11 @@ impl ThemeColors {
                 gpui::WindowAppearance::Dark | gpui::WindowAppearance::VibrantDark
             ),
         };
+        let is_frosted = background_mode != "solid";
         if is_dark {
-            Self::dark()
+            Self::dark(is_frosted)
         } else {
-            Self::light()
+            Self::light(is_frosted)
         }
     }
 }

@@ -35,7 +35,7 @@ pub struct Config {
 }
 
 fn default_background_mode() -> String {
-    "solid".to_string()
+    "frosted".to_string()
 }
 
 fn default_theme() -> String {
@@ -69,7 +69,7 @@ impl Default for Config {
             bookmarks: default_bookmarks,
             window_width: 1024,
             window_height: 700,
-            background_mode: "solid".to_string(),
+            background_mode: "frosted".to_string(),
             theme: "system".to_string(),
             font_size: 14.0,
         }

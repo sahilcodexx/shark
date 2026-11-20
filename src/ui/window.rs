@@ -142,12 +142,19 @@ pub struct MainWindow {
     pub theme_mode: theme::ThemeMode,
     pub active_theme: theme::ThemeColors,
     pub font_size: f32,
+    pub background_mode: String,
+    pub blur_coordinator: Option<crate::platform::PlatformBlurCoordinator>,
+    pub window_size: (i32, i32),
     appearance_subscription: Option<gpui::Subscription>,
     bounds_subscription: Option<gpui::Subscription>,
 }
 
 impl MainWindow {
-    pub fn new(initial_path: PathBuf, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        initial_path: PathBuf,
+        blur_coordinator: Option<crate::platform::PlatformBlurCoordinator>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let cancellable = Arc::new(AtomicBool::new(false));
         let history = NavigationHistory::new(initial_path.clone());
         let dir_cache = DirectoryCache::new();
@@ -165,6 +172,18 @@ impl MainWindow {
             }
         })
         .detach();
+
+        let cfg = crate::config::Config::load();
+        let is_frosted = cfg.background_mode != "solid";
+        let theme_mode = match cfg.theme.as_str() {
+            "light" => theme::ThemeMode::Light,
+            "dark" => theme::ThemeMode::Dark,
+            _ => theme::ThemeMode::System,
+        };
+        let initial_theme = match theme_mode {
+            theme::ThemeMode::Light => theme::ThemeColors::light(is_frosted),
+            _ => theme::ThemeColors::dark(is_frosted),
+        };
 
         let mut win = Self {
             current_path: initial_path.clone(),
@@ -202,13 +221,12 @@ impl MainWindow {
             search_active: false,
             path_editing: false,
             path_input_text: String::new(),
-            theme_mode: match crate::config::Config::load().theme.as_str() {
-                "light" => theme::ThemeMode::Light,
-                "dark" => theme::ThemeMode::Dark,
-                _ => theme::ThemeMode::System,
-            },
-            active_theme: theme::ThemeColors::light(),
-            font_size: crate::config::Config::load().font_size,
+            theme_mode,
+            active_theme: initial_theme,
+            font_size: cfg.font_size,
+            background_mode: cfg.background_mode.clone(),
+            blur_coordinator,
+            window_size: (cfg.window_width, cfg.window_height),
             appearance_subscription: None,
             bounds_subscription: None,
         };
@@ -598,6 +616,7 @@ impl MainWindow {
         }.to_string();
         config.sort_reversed = self.sort_reversed;
         config.font_size = self.font_size;
+        config.background_mode = self.background_mode.clone();
         config.save();
     }
 
@@ -970,6 +989,71 @@ impl MainWindow {
                             .font_weight(gpui::FontWeight::SEMIBOLD)
                             .text_color(theme.accent)
                             .child("VIEW & LAYOUT"),
+                    )
+                    // Window Material (Frosted Glass with Hardware Blur / Solid)
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .py_1p5()
+                            .border_b_1()
+                            .border_color(theme.surface_border)
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .child(
+                                        div()
+                                            .text_size(px(theme::TEXT_BODY))
+                                            .font_weight(gpui::FontWeight::MEDIUM)
+                                            .text_color(theme.text_primary)
+                                            .child("Frosted Glass & Blur"),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(px(theme::TEXT_CAPTION))
+                                            .text_color(theme.text_faint)
+                                            .child("Hardware Wayland blur (Niri ext-background-effect-v1)"),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .gap_1p5()
+                                    .child(
+                                        theme_button(
+                                            "bg-frosted",
+                                            if self.background_mode != "solid" { ButtonLook::Primary } else { ButtonLook::Secondary },
+                                            theme,
+                                        )
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.background_mode = "frosted".to_string();
+                                            if let Some(coord) = &mut this.blur_coordinator {
+                                                coord.set_enabled(true);
+                                            }
+                                            this.save_config();
+                                            cx.notify();
+                                        }))
+                                        .child("Frosted Blur"),
+                                    )
+                                    .child(
+                                        theme_button(
+                                            "bg-solid",
+                                            if self.background_mode == "solid" { ButtonLook::Primary } else { ButtonLook::Secondary },
+                                            theme,
+                                        )
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.background_mode = "solid".to_string();
+                                            if let Some(coord) = &mut this.blur_coordinator {
+                                                coord.set_enabled(false);
+                                            }
+                                            this.save_config();
+                                            cx.notify();
+                                        }))
+                                        .child("Solid"),
+                                    ),
+                            ),
                     )
                     // Option 1: Show Hidden Files
                     .child(
@@ -3375,12 +3459,22 @@ impl MainWindow {
 
 impl Render for MainWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.active_theme = theme::ThemeColors::resolve(self.theme_mode, window);
+        let win_size = window.viewport_size();
+        let cur_w = (win_size.width / px(1.0)).round() as i32;
+        let cur_h = (win_size.height / px(1.0)).round() as i32;
+        if cur_w > 0 && cur_h > 0 && (cur_w, cur_h) != self.window_size {
+            self.window_size = (cur_w, cur_h);
+            if let Some(coord) = &mut self.blur_coordinator {
+                coord.update_bounds(cur_w, cur_h);
+            }
+        }
+
+        self.active_theme = theme::ThemeColors::resolve(self.theme_mode, window, &self.background_mode);
         let theme = self.active_theme;
 
         if self.appearance_subscription.is_none() {
             self.appearance_subscription = Some(cx.observe_window_appearance(window, |this, window, cx| {
-                this.active_theme = theme::ThemeColors::resolve(this.theme_mode, window);
+                this.active_theme = theme::ThemeColors::resolve(this.theme_mode, window, &this.background_mode);
                 cx.notify();
             }));
         }
@@ -3471,6 +3565,9 @@ impl Render for MainWindow {
             .track_focus(&focus_handle)
             .size_full()
             .bg(theme.canvas)
+            .rounded(px(16.))
+            .border_1()
+            .border_color(theme.surface_border)
             .flex()
             .flex_col()
             .overflow_hidden()
