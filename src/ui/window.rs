@@ -8,9 +8,9 @@ use crate::navigation::history::NavigationHistory;
 use crate::theme::{self, button, icon, icon_button, ButtonLook, RADIUS_CARD, RADIUS_ROW, RADIUS_THUMB, TITLE_BAR_HEIGHT};
 use crate::thumbnails::ThumbnailCache;
 use gpui::{
-    actions, div, img, prelude::*, px, uniform_list, AnyElement, ClickEvent, Context, Div, ElementId,
-    FocusHandle, Hsla, IntoElement, KeyDownEvent, Render, ScrollWheelEvent, SharedString, UniformListScrollHandle,
-    Window,
+    actions, div, img, prelude::*, px, uniform_list, AnyElement, ClickEvent, Context, CursorStyle, Div, ElementId,
+    FocusHandle, Hsla, IntoElement, KeyDownEvent, MouseButton, Render, ResizeEdge, ScrollWheelEvent, SharedString,
+    Styled, UniformListScrollHandle, Window,
 };
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -572,12 +572,12 @@ impl MainWindow {
     }
 
     pub fn zoom_in(&mut self, cx: &mut Context<Self>) {
-        self.zoom = (self.zoom + 15.).min(180.);
+        self.zoom = (self.zoom + 20.).min(300.);
         cx.notify();
     }
 
     pub fn zoom_out(&mut self, cx: &mut Context<Self>) {
-        self.zoom = (self.zoom - 15.).max(65.);
+        self.zoom = (self.zoom - 20.).max(60.);
         cx.notify();
     }
 
@@ -1064,18 +1064,23 @@ impl MainWindow {
                                     .gap_1p5()
                                     .child(
                                         button("zoom-sm", if self.zoom <= 95. { ButtonLook::Primary } else { ButtonLook::Secondary })
-                                            .on_click(cx.listener(|this, _, _, cx| { this.zoom = 90.; cx.notify(); }))
+                                            .on_click(cx.listener(|this, _, _, cx| { this.zoom = 80.; cx.notify(); }))
                                             .child("Small"),
                                     )
                                     .child(
-                                        button("zoom-med", if self.zoom > 95. && self.zoom < 135. { ButtonLook::Primary } else { ButtonLook::Secondary })
-                                            .on_click(cx.listener(|this, _, _, cx| { this.zoom = 110.; cx.notify(); }))
+                                        button("zoom-med", if self.zoom > 95. && self.zoom <= 140. { ButtonLook::Primary } else { ButtonLook::Secondary })
+                                            .on_click(cx.listener(|this, _, _, cx| { this.zoom = 120.; cx.notify(); }))
                                             .child("Medium"),
                                     )
                                     .child(
-                                        button("zoom-lg", if self.zoom >= 135. { ButtonLook::Primary } else { ButtonLook::Secondary })
-                                            .on_click(cx.listener(|this, _, _, cx| { this.zoom = 150.; cx.notify(); }))
+                                        button("zoom-lg", if self.zoom > 140. && self.zoom <= 200. { ButtonLook::Primary } else { ButtonLook::Secondary })
+                                            .on_click(cx.listener(|this, _, _, cx| { this.zoom = 180.; cx.notify(); }))
                                             .child("Large"),
+                                    )
+                                    .child(
+                                        button("zoom-xl", if self.zoom > 200. { ButtonLook::Primary } else { ButtonLook::Secondary })
+                                            .on_click(cx.listener(|this, _, _, cx| { this.zoom = 250.; cx.notify(); }))
+                                            .child("Huge"),
                                     ),
                             ),
                     )
@@ -2965,7 +2970,7 @@ impl MainWindow {
         let theme = self.active_theme;
         let cols = self.grid_cols.max(1);
         let card_width = self.zoom;
-        let thumb_area_height = (card_width * 0.65).clamp(36., 120.);
+        let thumb_area_height = (card_width * 0.72).clamp(40., 220.);
         let is_compact = card_width < 95.;
         let text_height = if is_compact { 28. } else { 38. };
         let card_height = thumb_area_height + text_height + 14.;
@@ -3034,12 +3039,14 @@ impl MainWindow {
                                             .into_any_element(),
                                         None => {
                                             if entry.is_directory {
+                                                let icon_sz = (thumb_area_height * 0.90).clamp(28., 180.);
                                                 img("folder.svg")
-                                                    .size(px((thumb_area_height * 0.85).clamp(24., 64.)))
+                                                    .size(px(icon_sz))
                                                     .into_any_element()
                                             } else {
+                                                let icon_sz = (thumb_area_height * 0.85).clamp(26., 160.);
                                                 img(SharedString::from(format!("{}.svg", entry.icon_name)))
-                                                    .size(px((thumb_area_height * 0.8).clamp(24., 64.)))
+                                                    .size(px(icon_sz))
                                                     .into_any_element()
                                             }
                                         }
@@ -3381,6 +3388,7 @@ impl Render for MainWindow {
         // Keyboard & Scroll wheel handlers (Ctrl+Scroll for zooming)
         div()
             .id("shark-window-root")
+            .relative()
             .track_focus(&focus_handle)
             .size_full()
             .bg(theme.canvas)
@@ -3609,5 +3617,111 @@ impl Render for MainWindow {
             .when(self.show_command_palette, |d| {
                 d.child(self.render_command_palette(&theme, cx))
             })
+            // 8 edge / corner interactive resize handles for Wayland/X11
+            .child(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .child(
+                        div()
+                            .id("edge-top")
+                            .absolute()
+                            .top_0()
+                            .left(px(14.))
+                            .right(px(14.))
+                            .h(px(6.))
+                            .cursor(CursorStyle::ResizeUpDown)
+                            .on_mouse_down(MouseButton::Left, |_, window, _| {
+                                window.start_window_resize(ResizeEdge::Top);
+                            })
+                    )
+                    .child(
+                        div()
+                            .id("edge-bottom")
+                            .absolute()
+                            .bottom_0()
+                            .left(px(14.))
+                            .right(px(14.))
+                            .h(px(6.))
+                            .cursor(CursorStyle::ResizeUpDown)
+                            .on_mouse_down(MouseButton::Left, |_, window, _| {
+                                window.start_window_resize(ResizeEdge::Bottom);
+                            })
+                    )
+                    .child(
+                        div()
+                            .id("edge-left")
+                            .absolute()
+                            .left_0()
+                            .top(px(14.))
+                            .bottom(px(14.))
+                            .w(px(6.))
+                            .cursor(CursorStyle::ResizeLeftRight)
+                            .on_mouse_down(MouseButton::Left, |_, window, _| {
+                                window.start_window_resize(ResizeEdge::Left);
+                            })
+                    )
+                    .child(
+                        div()
+                            .id("edge-right")
+                            .absolute()
+                            .right_0()
+                            .top(px(14.))
+                            .bottom(px(14.))
+                            .w(px(6.))
+                            .cursor(CursorStyle::ResizeLeftRight)
+                            .on_mouse_down(MouseButton::Left, |_, window, _| {
+                                window.start_window_resize(ResizeEdge::Right);
+                            })
+                    )
+                    .child(
+                        div()
+                            .id("corner-top-left")
+                            .absolute()
+                            .top_0()
+                            .left_0()
+                            .size(px(14.))
+                            .cursor(CursorStyle::ResizeUpRightDownLeft)
+                            .on_mouse_down(MouseButton::Left, |_, window, _| {
+                                window.start_window_resize(ResizeEdge::TopLeft);
+                            })
+                    )
+                    .child(
+                        div()
+                            .id("corner-top-right")
+                            .absolute()
+                            .top_0()
+                            .right_0()
+                            .size(px(14.))
+                            .cursor(CursorStyle::ResizeUpLeftDownRight)
+                            .on_mouse_down(MouseButton::Left, |_, window, _| {
+                                window.start_window_resize(ResizeEdge::TopRight);
+                            })
+                    )
+                    .child(
+                        div()
+                            .id("corner-bottom-left")
+                            .absolute()
+                            .bottom_0()
+                            .left_0()
+                            .size(px(14.))
+                            .cursor(CursorStyle::ResizeUpLeftDownRight)
+                            .on_mouse_down(MouseButton::Left, |_, window, _| {
+                                window.start_window_resize(ResizeEdge::BottomLeft);
+                            })
+                    )
+                    .child(
+                        div()
+                            .id("corner-bottom-right")
+                            .absolute()
+                            .bottom_0()
+                            .right_0()
+                            .size(px(14.))
+                            .cursor(CursorStyle::ResizeUpRightDownLeft)
+                            .on_mouse_down(MouseButton::Left, |_, window, _| {
+                                window.start_window_resize(ResizeEdge::BottomRight);
+                            })
+                    )
+            )
     }
 }

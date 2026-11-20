@@ -5,7 +5,7 @@ use crate::config::Config;
 use crate::ui::MainWindow;
 use gpui::{
     point, px, size, App, AppContext, Bounds, TitlebarOptions, WindowBackgroundAppearance,
-    WindowBounds, WindowOptions,
+    WindowBounds, WindowDecorations, WindowOptions,
 };
 use std::path::PathBuf;
 
@@ -37,9 +37,10 @@ impl SharkApp {
                 app_id: Some("shark".into()),
                 titlebar: Some(TitlebarOptions {
                     title: Some("Shark".into()),
-                    appears_transparent: false,
+                    appears_transparent: true,
                     traffic_light_position: None,
                 }),
+                window_decorations: Some(WindowDecorations::Server),
                 ..Default::default()
             };
 
