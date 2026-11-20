@@ -1,7 +1,8 @@
 //! Appearance tokens and styling utilities for Shark GPUI file manager.
 
 use gpui::{
-    div, px, rgb, svg, Div, ElementId, FontWeight, Hsla, Role, Stateful, Svg, Window, prelude::*,
+    div, px, rgb, svg, BoxShadow, Div, ElementId, FontWeight, Hsla, Role, Stateful, Svg, Window,
+    prelude::*,
 };
 use serde::{Deserialize, Serialize};
 
@@ -19,6 +20,13 @@ pub const TEXT_HEADER: f32 = 16.;
 pub const TITLE_BAR_HEIGHT: f32 = 50.;
 pub const ROW_HEIGHT: f32 = 32.;
 pub const BUTTON_HEIGHT: f32 = 28.;
+
+pub const RADIUS_PANEL: f32 = 14.;
+pub const RADIUS_SIDEBAR: f32 = 14.;
+pub const SIDEBAR_PANEL_WIDTH: f32 = 220.;
+pub const SIDEBAR_ROW_HEIGHT: f32 = 28.;
+pub const PANEL_MARGIN: f32 = 8.;
+pub const PANEL_GAP: f32 = 12.;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
 pub enum ThemeMode {
@@ -50,6 +58,11 @@ pub struct ThemeColors {
     pub button_hover: Hsla,
     pub search_fill: Hsla,
     pub search_border: Hsla,
+    pub sidebar_hover: Hsla,
+    pub sidebar_selected: Hsla,
+    pub surface_border: Hsla,
+    pub shadow_soft: Hsla,
+    pub shadow_panel: Hsla,
 }
 
 impl ThemeColors {
@@ -75,6 +88,11 @@ impl ThemeColors {
             button_hover: rgb(0xf0f0f4).into(),
             search_fill: rgb(0xe8e8ed).into(),
             search_border: rgb(0xd8d8de).into(),
+            sidebar_hover: rgb(0xe9e9ef).into(),
+            sidebar_selected: rgb(0xdcdce2).into(),
+            surface_border: rgb(0xe2e2e8).into(),
+            shadow_soft: gpui::rgba(0x00000014).into(),
+            shadow_panel: gpui::rgba(0x00000024).into(),
         }
     }
 
@@ -100,6 +118,11 @@ impl ThemeColors {
             button_hover: rgb(0x32323e).into(),
             search_fill: rgb(0x282832).into(),
             search_border: rgb(0x383844).into(),
+            sidebar_hover: rgb(0x23232c).into(),
+            sidebar_selected: rgb(0x2e2e38).into(),
+            surface_border: rgb(0x33333d).into(),
+            shadow_soft: gpui::rgba(0x00000055).into(),
+            shadow_panel: gpui::rgba(0x00000066).into(),
         }
     }
 
@@ -118,6 +141,25 @@ impl ThemeColors {
             Self::light()
         }
     }
+}
+
+/// Restrained two-layer shadow used by floating panels and inspector surfaces.
+pub fn floating_panel_shadows(theme: &ThemeColors) -> Vec<BoxShadow> {
+    vec![
+        BoxShadow::new(px(0.), px(1.), theme.shadow_soft)
+            .blur_radius(px(3.))
+            .spread_radius(px(0.)),
+        BoxShadow::new(px(0.), px(12.), theme.shadow_panel)
+            .blur_radius(px(28.))
+            .spread_radius(px(0.)),
+    ]
+}
+
+/// Smaller contact shadow for toolbar controls and search fields.
+pub fn control_shadow(theme: &ThemeColors) -> Vec<BoxShadow> {
+    vec![BoxShadow::new(px(0.), px(1.), theme.shadow_soft)
+        .blur_radius(px(2.))
+        .spread_radius(px(0.))]
 }
 
 // Fallback tokens for static calls
@@ -341,10 +383,28 @@ pub fn macos_joint_container(id: impl Into<ElementId>, theme: &ThemeColors) -> S
         .bg(theme.button_fill)
         .border_1()
         .border_color(theme.button_border)
-        .rounded(px(7.))
+        .rounded(px(8.))
+        .shadow(control_shadow(theme))
         .flex()
         .items_center()
-        .p(px(1.5))
+        .p(px(2.))
+        .gap(px(1.))
+        .flex_shrink_0()
+}
+
+/// Capsule container for the unified back/forward navigation control.
+pub fn macos_capsule_container(id: impl Into<ElementId>, theme: &ThemeColors) -> Stateful<Div> {
+    div()
+        .id(id)
+        .h(px(BUTTON_HEIGHT))
+        .bg(theme.button_fill)
+        .border_1()
+        .border_color(theme.button_border)
+        .rounded_full()
+        .shadow(control_shadow(theme))
+        .flex()
+        .items_center()
+        .p(px(2.))
         .gap(px(1.))
         .flex_shrink_0()
 }
@@ -360,9 +420,9 @@ pub fn macos_joint_button(
     let base = div()
         .id(id)
         .role(Role::Button)
-        .h(px(BUTTON_HEIGHT - 3.))
-        .px(px(8.))
-        .rounded(px(5.))
+        .h(px(BUTTON_HEIGHT - 4.))
+        .px(px(7.))
+        .rounded(px(6.))
         .flex()
         .items_center()
         .justify_center()
@@ -377,9 +437,10 @@ pub fn macos_joint_button(
     base
         .cursor_pointer()
         .when(active, |d| {
-            d.bg(if theme.is_dark { gpui::rgba(0xffffff22) } else { rgb(0xffffff) })
+            d.bg(if theme.is_dark { gpui::rgba(0xffffff2b) } else { rgb(0xffffff) })
                 .border_1()
                 .border_color(if theme.is_dark { gpui::rgba(0xffffff30) } else { rgb(0xd0d0d8) })
+                .shadow(control_shadow(theme))
         })
         .when(!active, |d| {
             d.hover(|s| s.bg(theme.button_hover).text_color(theme.text_primary))

@@ -8,9 +8,9 @@ use crate::navigation::history::NavigationHistory;
 use crate::theme::{self, button, icon, icon_button, ButtonLook, RADIUS_CARD, RADIUS_ROW, RADIUS_THUMB, TITLE_BAR_HEIGHT};
 use crate::thumbnails::ThumbnailCache;
 use gpui::{
-    actions, div, img, prelude::*, px, uniform_list, AnyElement, BoxShadow, ClickEvent, Context,
-    Div, ElementId, FocusHandle, Hsla, IntoElement, KeyDownEvent, Render, ScrollWheelEvent,
-    UniformListScrollHandle, Window,
+    actions, div, img, prelude::*, px, uniform_list, AnyElement, ClickEvent, Context, Div, ElementId,
+    FocusHandle, Hsla, IntoElement, KeyDownEvent, Render, ScrollWheelEvent, UniformListScrollHandle,
+    Window,
 };
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -141,6 +141,7 @@ pub struct MainWindow {
     pub path_input_text: String,
     pub theme_mode: theme::ThemeMode,
     pub active_theme: theme::ThemeColors,
+    appearance_subscription: Option<gpui::Subscription>,
 }
 
 impl MainWindow {
@@ -205,6 +206,7 @@ impl MainWindow {
                 _ => theme::ThemeMode::System,
             },
             active_theme: theme::ThemeColors::light(),
+            appearance_subscription: None,
         };
 
         win.navigate_to(initial_path, cx);
@@ -596,9 +598,6 @@ impl MainWindow {
         div()
             .h(px(TITLE_BAR_HEIGHT))
             .px_3()
-            .bg(theme.topbar)
-            .border_b_1()
-            .border_color(theme.topbar_border)
             .flex()
             .items_center()
             .justify_between()
@@ -608,9 +607,10 @@ impl MainWindow {
                 div()
                     .flex()
                     .items_center()
-                    .gap_3()
+                    .gap_2()
+                    .child(self.render_traffic_lights(cx))
                     .child(
-                        theme::macos_joint_container("nav-segment", theme)
+                        theme::macos_capsule_container("nav-segment", theme)
                             .child(
                                 theme::macos_joint_button("nav-back", "chevron-left", false, can_back, theme)
                                     .on_click(cx.listener(|this, _, _, cx| this.go_back(cx))),
@@ -631,6 +631,8 @@ impl MainWindow {
                         } else {
                             div()
                                 .id("current-folder-title-pill")
+                                .flex_1()
+                                .min_w_0()
                                 .flex()
                                 .items_center()
                                 .gap_2()
@@ -643,13 +645,16 @@ impl MainWindow {
                                 }))
                                 .child(
                                     div()
+                                        .min_w_0()
+                                        .truncate()
                                         .text_size(px(15.))
-                                        .font_weight(gpui::FontWeight::BOLD)
+                                        .font_weight(gpui::FontWeight::SEMIBOLD)
                                         .text_color(theme.text_primary)
                                         .child(folder_name),
                                 )
                                 .child(
                                     theme::icon("chevron-down-hi", 11.)
+                                        .flex_shrink_0()
                                         .text_color(theme.text_faint),
                                 )
                         }
@@ -719,50 +724,41 @@ impl MainWindow {
                                 })),
                             ),
                     )
-                    // 3. macOS Sleek Search Pill [ 🔍 Search                        ]
+                    // 3. macOS Finder-style search capsule
                     .child(
                         div()
                             .id("macos-search-bar")
-                            .w(px(220.))
+                            .w(px(230.))
+                            .min_w(px(150.))
+                            .flex_shrink_1()
                             .h(px(theme::BUTTON_HEIGHT))
                             .px_3()
                             .bg(theme.search_fill)
                             .rounded_full()
                             .border_1()
                             .border_color(theme.search_border)
+                            .shadow(theme::control_shadow(theme))
                             .cursor_pointer()
                             .flex()
                             .items_center()
-                            .justify_between()
-                            .hover(|s| s.opacity(0.9))
+                            .gap_2()
+                            .hover(|s| s.bg(theme.button_hover))
+                            .active(|s| s.bg(theme.sidebar_selected))
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.show_command_palette = true;
                                 this.command_palette_query.clear();
                                 this.command_palette_selected = 0;
                                 cx.notify();
                             }))
+                            .child(theme::icon("search", 13.).text_color(theme.text_muted))
                             .child(
                                 div()
-                                    .flex()
-                                    .items_center()
-                                    .gap_2()
-                                    .child(theme::icon("search", 13.).text_color(theme.text_muted))
-                                    .child(
-                                        div()
-                                            .text_size(px(theme::TEXT_SMALL))
-                                            .text_color(theme.text_muted)
-                                            .child(if self.search_query.is_empty() { "Search".to_string() } else { self.search_query.clone() }),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .px_1p5()
-                                    .py_0p5()
-                                    .rounded(px(3.))
-                                    .bg(if theme.is_dark { gpui::rgba(0xffffff15) } else { gpui::rgba(0x00000010) })
-                                    .text_size(px(10.))
-                                    .text_color(theme.text_faint)
-                                    .child("⌘K"),
+                                    .flex_1()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_size(px(theme::TEXT_SMALL))
+                                    .text_color(theme.text_muted)
+                                    .child(if self.search_query.is_empty() { "Search".to_string() } else { self.search_query.clone() }),
                             ),
                     ),
             )
@@ -2466,7 +2462,8 @@ impl MainWindow {
     fn render_traffic_lights(&self, cx: &mut Context<Self>) -> Div {
         div()
             .h(px(TITLE_BAR_HEIGHT))
-            .px_4()
+            .px_3()
+            .flex_shrink_0()
             .flex()
             .items_center()
             .gap(px(8.))
@@ -2550,34 +2547,28 @@ impl MainWindow {
         ];
 
         div()
-            .w(px(220.))
+            .w(px(theme::SIDEBAR_PANEL_WIDTH))
             .h_full()
+            .flex_shrink_0()
             .bg(theme.sidebar)
-            .border_r_1()
-            .border_color(theme.sidebar_border)
-            .shadow(vec![
-                BoxShadow::new(
-                    px(4.),
-                    px(0.),
-                    gpui::hsla(0., 0., 0., if theme.is_dark { 0.35 } else { 0.08 }),
-                )
-                .blur_radius(px(12.))
-                .spread_radius(px(1.)),
-            ])
+            .rounded(px(theme::RADIUS_SIDEBAR))
+            .border_1()
+            .border_color(theme.surface_border)
+            .shadow(theme::floating_panel_shadows(theme))
+            .overflow_hidden()
             .flex()
             .flex_col()
-            .flex_shrink_0()
-            .child(self.render_traffic_lights(cx))
             .child(
                 div()
                     .id("sidebar-sections-scroll")
                     .flex_1()
+                    .min_h_0()
                     .overflow_y_scroll()
                     .px_3()
-                    .py_2()
+                    .py_3()
                     .flex()
                     .flex_col()
-                    .gap_3()
+                    .gap_4()
                     .child(self.render_sidebar_section("Favorites", favorites, theme, cx))
                     .child(self.render_sidebar_section("Locations", locations, theme, cx))
                     .child(self.render_sidebar_tags_section("Tags", tags, theme, cx)),
@@ -2598,11 +2589,11 @@ impl MainWindow {
             .child(
                 div()
                     .px_2()
-                    .py_1()
+                    .pb_1()
                     .flex()
                     .items_center()
-                    .text_size(px(11.))
-                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .text_size(px(theme::TEXT_CAPTION))
+                    .font_weight(gpui::FontWeight::MEDIUM)
                     .text_color(theme.text_faint)
                     .child(title),
             )
@@ -2612,33 +2603,31 @@ impl MainWindow {
 
                 div()
                     .id(ElementId::from(id))
-                    .h(px(30.))
-                    .px_2p5()
-                    .rounded(px(7.))
+                    .h(px(theme::SIDEBAR_ROW_HEIGHT))
+                    .px_2()
+                    .rounded(px(6.))
                     .flex()
                     .items_center()
                     .gap_2()
                     .cursor_pointer()
                     .when(is_active, |d| {
-                        d.bg(theme.selection)
-                            .border_1()
-                            .border_color(if theme.is_dark { gpui::rgba(0x0a84ff55) } else { gpui::rgba(0x007aff44) })
+                        d.bg(theme.sidebar_selected)
                     })
                     .when(!is_active, |d| {
-                        d.hover(|s| s.bg(theme.button_hover))
+                        d.hover(|s| s.bg(theme.sidebar_hover))
                     })
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.navigate_to(target.clone(), cx);
                     }))
                     .child(
-                        theme::icon(icon_name, 15.)
+                        theme::icon(icon_name, 14.)
                             .text_color(if is_active { theme.accent } else { theme.text_muted }),
                     )
                     .child(
                         div()
                             .text_size(px(theme::TEXT_BODY))
-                            .text_color(if is_active { theme.text_primary } else { theme.text_muted })
-                            .font_weight(if is_active { gpui::FontWeight::SEMIBOLD } else { gpui::FontWeight::NORMAL })
+                            .text_color(if is_active { theme.accent } else { theme.text_primary })
+                            .font_weight(if is_active { gpui::FontWeight::MEDIUM } else { gpui::FontWeight::NORMAL })
                             .child(label),
                     )
             }))
@@ -2658,25 +2647,25 @@ impl MainWindow {
             .child(
                 div()
                     .px_2()
-                    .py_1()
+                    .pb_1()
                     .flex()
                     .items_center()
-                    .text_size(px(11.))
-                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .text_size(px(theme::TEXT_CAPTION))
+                    .font_weight(gpui::FontWeight::MEDIUM)
                     .text_color(theme.text_faint)
                     .child(title),
             )
             .children(tags.into_iter().map(|(id, label, color)| {
                 div()
                     .id(ElementId::from(id))
-                    .h(px(28.))
-                    .px_2p5()
+                    .h(px(theme::SIDEBAR_ROW_HEIGHT))
+                    .px_2()
                     .rounded(px(6.))
                     .flex()
                     .items_center()
                     .gap_2()
                     .cursor_pointer()
-                    .hover(|s| s.bg(theme.button_hover))
+                    .hover(|s| s.bg(theme.sidebar_hover))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.search_query = label.to_lowercase();
                         this.sort_and_filter();
@@ -2700,14 +2689,14 @@ impl MainWindow {
             .child(
                 div()
                     .id("tag-all")
-                    .h(px(28.))
-                    .px_2p5()
+                    .h(px(theme::SIDEBAR_ROW_HEIGHT))
+                    .px_2()
                     .rounded(px(6.))
                     .flex()
                     .items_center()
                     .gap_2()
                     .cursor_pointer()
-                    .hover(|s| s.bg(theme.button_hover))
+                    .hover(|s| s.bg(theme.sidebar_hover))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.search_query.clear();
                         this.sort_and_filter();
@@ -2755,7 +2744,7 @@ impl MainWindow {
                     .flex()
                     .items_center()
                     .text_size(px(theme::TEXT_CAPTION))
-                    .font_weight(gpui::FontWeight::BOLD)
+                    .font_weight(gpui::FontWeight::MEDIUM)
                     .text_color(theme.text_faint)
                     .child(
                         div()
@@ -3120,10 +3109,14 @@ impl MainWindow {
         div()
             .w(px(270.))
             .h_full()
+            .flex_shrink_0()
             .bg(theme.sidebar)
-            .border_l_1()
-            .border_color(theme.sidebar_border)
+            .rounded(px(theme::RADIUS_PANEL))
+            .border_1()
+            .border_color(theme.surface_border)
+            .shadow(theme::floating_panel_shadows(theme))
             .p_4()
+            .overflow_hidden()
             .flex()
             .flex_col()
             .gap_4()
@@ -3135,7 +3128,7 @@ impl MainWindow {
                     .child(
                         div()
                             .text_size(px(theme::TEXT_HEADER))
-                            .font_weight(gpui::FontWeight::BOLD)
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
                             .text_color(theme.text_primary)
                             .child("Properties"),
                     )
@@ -3183,7 +3176,7 @@ impl MainWindow {
 
         let file_name = div()
             .text_size(px(theme::TEXT_TITLE))
-            .font_weight(gpui::FontWeight::BOLD)
+            .font_weight(gpui::FontWeight::SEMIBOLD)
             .text_color(theme.text_primary)
             .child(entry.name.clone());
 
@@ -3263,7 +3256,7 @@ impl MainWindow {
             .child(
                 div()
                     .text_size(px(theme::TEXT_TITLE))
-                    .font_weight(gpui::FontWeight::BOLD)
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
                     .text_color(theme.text_primary)
                     .child(name),
             )
@@ -3315,6 +3308,14 @@ impl Render for MainWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.active_theme = theme::ThemeColors::resolve(self.theme_mode, window);
         let theme = self.active_theme;
+
+        if self.appearance_subscription.is_none() {
+            self.appearance_subscription = Some(cx.observe_window_appearance(window, |this, window, cx| {
+                this.active_theme = theme::ThemeColors::resolve(this.theme_mode, window);
+                cx.notify();
+            }));
+        }
+
         let total_items = self.filtered_indices.len();
         let selected_size = self.selected_index.and_then(|idx| self.entry_at(idx)).map(|e| e.formatted_size());
         let free_space = crate::utils::get_disk_free_space(&self.current_path).unwrap_or_else(|| "0 GB".to_string());
@@ -3322,9 +3323,10 @@ impl Render for MainWindow {
 
         // Dynamic responsive column calculation across pane width
         let window_width = f32::from(window.viewport_size().width);
-        let sidebar_width = 220.0;
+        let sidebar_slot = theme::PANEL_MARGIN + theme::SIDEBAR_PANEL_WIDTH + theme::PANEL_GAP + theme::PANEL_MARGIN;
         let inspector_width = if self.show_inspector { 270.0 } else { 0.0 };
-        let pane_width = (window_width - sidebar_width - inspector_width - 32.0).max(200.0);
+        let inspector_gap = if self.show_inspector { 8.0 } else { 0.0 };
+        let pane_width = (window_width - sidebar_slot - inspector_width - inspector_gap - 16.0).max(200.0);
 
         let card_width = self.zoom;
         let gap = 12.0;
@@ -3363,6 +3365,34 @@ impl Render for MainWindow {
             ))
             .child(format!("{} free", free_space));
 
+        let content_panel = div()
+            .flex_1()
+            .min_w_0()
+            .h_full()
+            .min_h_0()
+            .bg(theme.pane)
+            .rounded(px(theme::RADIUS_PANEL))
+            .border_1()
+            .border_color(theme.surface_border)
+            .shadow(theme::floating_panel_shadows(&theme))
+            .overflow_hidden()
+            .flex()
+            .flex_col()
+            .when(self.has_active_filters(), |d| {
+                d.child(self.render_active_filters_bar(&theme, cx))
+            })
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .flex()
+                    .flex_row()
+                    .overflow_hidden()
+                    .child(pane)
+                    .children(inspector),
+            )
+            .child(status_bar);
+
         // Keyboard & Scroll wheel handlers (Ctrl+Scroll for zooming)
         div()
             .id("shark-window-root")
@@ -3370,7 +3400,7 @@ impl Render for MainWindow {
             .size_full()
             .bg(theme.canvas)
             .flex()
-            .flex_row()
+            .flex_col()
             .overflow_hidden()
             .on_scroll_wheel(cx.listener(|this, ev: &ScrollWheelEvent, _, cx| {
                 if ev.modifiers.control {
@@ -3564,42 +3594,18 @@ impl Render for MainWindow {
                     }
                 }
             }))
-            .child(sidebar)
+            .child(toolbar)
             .child(
                 div()
-                    .flex()
-                    .flex_col()
                     .flex_1()
-                    .h_full()
                     .min_h_0()
-                    .bg(theme.pane)
-                    .shadow(vec![
-                        BoxShadow::new(
-                            px(6.),
-                            px(0.),
-                            gpui::hsla(0., 0., 0., if theme.is_dark { 0.40 } else { 0.10 }),
-                        )
-                        .blur_radius(px(14.))
-                        .inset(),
-                    ])
+                    .flex()
+                    .flex_row()
+                    .p_2()
+                    .gap_3()
                     .overflow_hidden()
-                    .child(toolbar)
-                    .when(self.has_active_filters(), |d| {
-                        d.child(self.render_active_filters_bar(&theme, cx))
-                    })
-                    .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .flex_1()
-                            .h_full()
-                            .min_h_0()
-                            .bg(theme.pane)
-                            .overflow_hidden()
-                            .child(pane)
-                            .children(inspector),
-                    )
-                    .child(status_bar),
+                    .child(sidebar)
+                    .child(content_panel),
             )
             .when(self.show_filter_menu, |d| {
                 d.child(self.render_filter_popover(cx))
