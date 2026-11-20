@@ -180,7 +180,7 @@ impl MainWindow {
             show_filter_menu: false,
             enable_thumbnails: true,
             confirm_delete: true,
-            show_inspector: true,
+            show_inspector: false,
             zoom: 110.,
             scroll_handle: UniformListScrollHandle::new(),
             thumbnails,
@@ -232,6 +232,7 @@ impl MainWindow {
         self.current_path = path.clone();
         self.selected_index = None;
         self.search_query.clear();
+        self.scroll_handle = UniformListScrollHandle::new();
 
         // 1. Instant zero-latency display from DirectoryCache (KDE Dolphin / GNOME Files style)
         if let Some(cached) = self.dir_cache.get(&path) {
@@ -2600,12 +2601,10 @@ impl MainWindow {
                     .py_1()
                     .flex()
                     .items_center()
-                    .justify_between()
                     .text_size(px(11.))
                     .font_weight(gpui::FontWeight::SEMIBOLD)
                     .text_color(theme.text_faint)
-                    .child(title)
-                    .child(theme::icon("chevron-down-hi", 10.).text_color(theme.text_faint)),
+                    .child(title),
             )
             .children(items.into_iter().map(|(id, label, icon_name, path)| {
                 let is_active = self.current_path == path;
@@ -2662,12 +2661,10 @@ impl MainWindow {
                     .py_1()
                     .flex()
                     .items_center()
-                    .justify_between()
                     .text_size(px(11.))
                     .font_weight(gpui::FontWeight::SEMIBOLD)
                     .text_color(theme.text_faint)
-                    .child(title)
-                    .child(theme::icon("chevron-down-hi", 10.).text_color(theme.text_faint)),
+                    .child(title),
             )
             .children(tags.into_iter().map(|(id, label, color)| {
                 div()
@@ -3009,17 +3006,19 @@ impl MainWindow {
                             .h(px(card_height))
                             .p_2()
                             .rounded(px(RADIUS_ROW))
-                            .bg(if is_selected { theme.selection } else { theme.card })
-                            .border_1()
-                            .border_color(if is_selected { theme.accent } else { theme.card_border })
+                            .when(is_selected, |d| {
+                                d.bg(theme.selection)
+                                    .border_1()
+                                    .border_color(theme.accent)
+                            })
+                            .when(!is_selected, |d| {
+                                d.hover(|s| s.bg(theme.card_hover))
+                            })
                             .cursor_pointer()
                             .flex()
                             .flex_col()
                             .items_center()
                             .justify_between()
-                            .when(!is_selected, |d| {
-                                d.hover(|s| s.bg(theme.card_hover))
-                            })
                             .on_click(cx.listener(move |this, ev: &ClickEvent, _, cx| {
                                 if ev.click_count() >= 2 {
                                     this.open_selected(cx);
@@ -3574,6 +3573,15 @@ impl Render for MainWindow {
                     .h_full()
                     .min_h_0()
                     .bg(theme.pane)
+                    .shadow(vec![
+                        BoxShadow::new(
+                            px(6.),
+                            px(0.),
+                            gpui::hsla(0., 0., 0., if theme.is_dark { 0.40 } else { 0.10 }),
+                        )
+                        .blur_radius(px(14.))
+                        .inset(),
+                    ])
                     .overflow_hidden()
                     .child(toolbar)
                     .when(self.has_active_filters(), |d| {

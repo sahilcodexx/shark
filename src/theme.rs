@@ -374,17 +374,17 @@ pub fn macos_joint_button(
             .child(icon(name, 13.).text_color(theme.text_faint));
     }
 
-    let icon_color = if active { theme.accent } else { theme.text_muted };
-
     base
         .cursor_pointer()
         .when(active, |d| {
-            d.bg(theme.selection)
+            d.bg(if theme.is_dark { gpui::rgba(0xffffff22) } else { rgb(0xffffff) })
+                .border_1()
+                .border_color(if theme.is_dark { gpui::rgba(0xffffff30) } else { rgb(0xd0d0d8) })
         })
         .when(!active, |d| {
             d.hover(|s| s.bg(theme.button_hover).text_color(theme.text_primary))
         })
-        .child(icon(name, 13.).text_color(icon_color))
+        .child(icon(name, 13.).text_color(if active { theme.text_primary } else { theme.text_muted }))
 }
 
 /// macOS-style segmented container for grouped buttons (e.g. < | > navigation, view switchers)
