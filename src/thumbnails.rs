@@ -39,8 +39,8 @@ impl ThumbnailCache {
         let queued = Arc::new(Mutex::new(HashSet::new()));
         let lookup_cache = Arc::new(RwLock::new(HashMap::with_capacity(512)));
 
-        // Spawn 2 background workers with low priority for smooth UI performance
-        for _ in 0..2 {
+        // Spawn 4 background workers with low priority for smooth parallel thumbnail performance
+        for _ in 0..4 {
             let rx = receiver.clone();
             let lookup = lookup_cache.clone();
             let ready_tx = ready_sender.clone();

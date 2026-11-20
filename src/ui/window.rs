@@ -142,6 +142,7 @@ pub struct MainWindow {
     pub theme_mode: theme::ThemeMode,
     pub active_theme: theme::ThemeColors,
     appearance_subscription: Option<gpui::Subscription>,
+    bounds_subscription: Option<gpui::Subscription>,
 }
 
 impl MainWindow {
@@ -207,6 +208,7 @@ impl MainWindow {
             },
             active_theme: theme::ThemeColors::light(),
             appearance_subscription: None,
+            bounds_subscription: None,
         };
 
         win.navigate_to(initial_path, cx);
@@ -575,7 +577,7 @@ impl MainWindow {
     }
 
     pub fn zoom_out(&mut self, cx: &mut Context<Self>) {
-        self.zoom = (self.zoom - 15.).max(80.);
+        self.zoom = (self.zoom - 15.).max(65.);
         cx.notify();
     }
 
@@ -2974,7 +2976,10 @@ impl MainWindow {
         let theme = self.active_theme;
         let cols = self.grid_cols.max(1);
         let card_width = self.zoom;
-        let card_height = card_width + 36.;
+        let thumb_area_height = (card_width * 0.65).clamp(36., 120.);
+        let is_compact = card_width < 95.;
+        let text_height = if is_compact { 28. } else { 38. };
+        let card_height = thumb_area_height + text_height + 14.;
         let entries_count = self.filtered_indices.len();
 
         range
@@ -2999,7 +3004,7 @@ impl MainWindow {
                             .id(ElementId::from(format!("grid-card-{}", i)))
                             .w(px(card_width))
                             .h(px(card_height))
-                            .p_2()
+                            .p_1p5()
                             .rounded(px(RADIUS_ROW))
                             .when(is_selected, |d| {
                                 d.bg(theme.selection)
@@ -3022,25 +3027,26 @@ impl MainWindow {
                                     cx.notify();
                                 }
                             }))
-                            // Thumbnail / Icon Area
+                            // Thumbnail / Icon Area - Fixed height so it NEVER shrinks to 0
                             .child(
                                 div()
-                                    .flex_1()
+                                    .h(px(thumb_area_height))
                                     .w_full()
+                                    .flex_shrink_0()
                                     .flex()
                                     .items_center()
                                     .justify_center()
                                     .overflow_hidden()
                                     .child(match thumb_path {
                                         Some(p) => img(p)
-                                            .max_w(px(card_width - 16.))
-                                            .max_h(px(card_width - 16.))
+                                            .max_w(px(card_width - 8.))
+                                            .max_h(px(thumb_area_height))
                                             .rounded(px(RADIUS_THUMB))
                                             .into_any_element(),
                                         None => {
                                             if entry.is_directory {
                                                 img("folder.svg")
-                                                    .size(px(card_width * 0.58))
+                                                    .size(px((thumb_area_height * 0.85).clamp(24., 64.)))
                                                     .into_any_element()
                                             } else {
                                                 let icon_color = gpui::rgba(entry.icon_color_hex());
@@ -3050,42 +3056,50 @@ impl MainWindow {
                                                     .flex_col()
                                                     .items_center()
                                                     .justify_center()
-                                                    .gap_1p5()
+                                                    .gap_1()
                                                     .child(
-                                                        icon(entry.icon_name, (card_width * 0.38).clamp(32., 54.))
+                                                        icon(entry.icon_name, (thumb_area_height * 0.65).clamp(20., 48.))
                                                             .text_color(icon_color)
                                                     )
-                                                    .when_some(badge, |d, b| {
-                                                        d.child(
-                                                            div()
-                                                                .px_1p5()
-                                                                .py_0p5()
-                                                                .rounded(px(3.))
-                                                                .bg(icon_color.opacity(0.15))
-                                                                .border_1()
-                                                                .border_color(icon_color.opacity(0.3))
-                                                                .text_size(px(9.))
-                                                                .font_weight(gpui::FontWeight::BOLD)
-                                                                .text_color(icon_color)
-                                                                .child(b),
-                                                        )
+                                                    .when(!is_compact, |d| {
+                                                        d.when_some(badge, |d, b| {
+                                                            d.child(
+                                                                div()
+                                                                    .px_1p5()
+                                                                    .py_0p5()
+                                                                    .rounded(px(3.))
+                                                                    .bg(icon_color.opacity(0.15))
+                                                                    .border_1()
+                                                                    .border_color(icon_color.opacity(0.3))
+                                                                    .text_size(px(9.))
+                                                                    .font_weight(gpui::FontWeight::BOLD)
+                                                                    .text_color(icon_color)
+                                                                    .child(b),
+                                                            )
+                                                        })
                                                     })
                                                     .into_any_element()
                                             }
                                         }
                                     }),
                             )
-                            // Title & Info
+                            // Title & Info Area - Clamped to prevent crushing thumbnail
                             .child(
                                 div()
                                     .w_full()
+                                    .h(px(text_height))
+                                    .flex_shrink_0()
                                     .flex()
                                     .flex_col()
                                     .items_center()
+                                    .justify_center()
+                                    .overflow_hidden()
                                     .child(
                                         div()
-                                            .text_size(px(theme::TEXT_SMALL))
+                                            .text_size(px(if is_compact { 11. } else { theme::TEXT_SMALL }))
                                             .text_color(theme.text_primary)
+                                            .text_center()
+                                            .line_clamp(2)
                                             .font_weight(if entry.is_directory {
                                                 gpui::FontWeight::SEMIBOLD
                                             } else {
@@ -3095,12 +3109,14 @@ impl MainWindow {
                                             .overflow_hidden()
                                             .child(entry.name.clone()),
                                     )
-                                    .child(
-                                        div()
-                                            .text_size(px(theme::TEXT_CAPTION))
-                                            .text_color(theme.text_faint)
-                                            .child(entry.formatted_size()),
-                                    ),
+                                    .when(!is_compact, |d| {
+                                        d.child(
+                                            div()
+                                                .text_size(px(theme::TEXT_CAPTION))
+                                                .text_color(theme.text_faint)
+                                                .child(entry.formatted_size()),
+                                        )
+                                    }),
                             )
                             .into_any_element()
                     }))
@@ -3318,6 +3334,12 @@ impl Render for MainWindow {
         if self.appearance_subscription.is_none() {
             self.appearance_subscription = Some(cx.observe_window_appearance(window, |this, window, cx| {
                 this.active_theme = theme::ThemeColors::resolve(this.theme_mode, window);
+                cx.notify();
+            }));
+        }
+
+        if self.bounds_subscription.is_none() {
+            self.bounds_subscription = Some(cx.observe_window_bounds(window, |_this, _window, cx| {
                 cx.notify();
             }));
         }

@@ -183,28 +183,28 @@ pub fn percent_encode_path(s: &str) -> String {
 /// Find a cached Freedesktop thumbnail on disk in ~/.cache/thumbnails/.
 /// Supports both RFC 2396 percent-encoded URIs (Dolphin/GNOME) and raw URIs.
 pub fn find_cached_thumbnail_path(path: &Path) -> Option<PathBuf> {
-    let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-    let path_str = canonical.to_string_lossy();
     let home = dirs::home_dir()?;
     let thumbs_root = home.join(".cache/thumbnails");
 
-    // 1. Raw URI (file:///path)
-    let raw_uri = format!("file://{}", path_str);
-    let hash_raw = format!("{:x}", Md5::digest(raw_uri.as_bytes()));
+    let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let p1 = canonical.to_string_lossy();
+    let p2 = path.to_string_lossy();
 
-    // 2. Encoded URI (file:///path%20with%20spaces - Freedesktop standard)
-    let enc_uri = format!("file://{}", percent_encode_path(&path_str));
-    let hash_enc = format!("{:x}", Md5::digest(enc_uri.as_bytes()));
+    let mut hashes = Vec::with_capacity(4);
+    for p in [&p1, &p2] {
+        let enc_uri = format!("file://{}", percent_encode_path(p));
+        hashes.push(format!("{:x}", Md5::digest(enc_uri.as_bytes())));
+        let raw_uri = format!("file://{}", p);
+        hashes.push(format!("{:x}", Md5::digest(raw_uri.as_bytes())));
+    }
 
-    for folder in ["normal", "large", "x-large"] {
+    for folder in ["large", "normal", "x-large"] {
         let dir = thumbs_root.join(folder);
-        let p_enc = dir.join(format!("{}.png", hash_enc));
-        if p_enc.exists() {
-            return Some(p_enc);
-        }
-        let p_raw = dir.join(format!("{}.png", hash_raw));
-        if p_raw.exists() {
-            return Some(p_raw);
+        for h in &hashes {
+            let p = dir.join(format!("{}.png", h));
+            if p.exists() {
+                return Some(p);
+            }
         }
     }
     None

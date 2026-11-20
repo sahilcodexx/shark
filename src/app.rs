@@ -32,7 +32,7 @@ impl SharkApp {
 
             let options = WindowOptions {
                 window_bounds: Some(bounds),
-                window_min_size: Some(size(px(700.), px(480.))),
+                window_min_size: Some(size(px(320.), px(240.))),
                 window_background: WindowBackgroundAppearance::Opaque,
                 app_id: Some("shark".into()),
                 titlebar: Some(TitlebarOptions {
