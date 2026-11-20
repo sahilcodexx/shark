@@ -597,6 +597,7 @@ impl MainWindow {
 
         div()
             .h(px(TITLE_BAR_HEIGHT))
+            .flex_shrink_0()
             .px_3()
             .flex()
             .items_center()
@@ -608,7 +609,6 @@ impl MainWindow {
                     .flex()
                     .items_center()
                     .gap_2()
-                    .child(self.render_traffic_lights(cx))
                     .child(
                         theme::macos_capsule_container("nav-segment", theme)
                             .child(
@@ -2461,7 +2461,8 @@ impl MainWindow {
     fn render_traffic_lights(&self, cx: &mut Context<Self>) -> Div {
         div()
             .h(px(TITLE_BAR_HEIGHT))
-            .px_3()
+            .pl(px(16.))
+            .pr_3()
             .flex_shrink_0()
             .flex()
             .items_center()
@@ -2557,6 +2558,7 @@ impl MainWindow {
             .overflow_hidden()
             .flex()
             .flex_col()
+            .child(self.render_traffic_lights(cx))
             .child(
                 div()
                     .id("sidebar-sections-scroll")
@@ -2564,7 +2566,7 @@ impl MainWindow {
                     .min_h_0()
                     .overflow_y_scroll()
                     .px_3()
-                    .py_3()
+                    .pb_3()
                     .flex()
                     .flex_col()
                     .gap_4()
@@ -3340,6 +3342,7 @@ impl Render for MainWindow {
         // Bottom Status Bar
         let status_bar = div()
             .h(px(24.))
+            .flex_shrink_0()
             .px_3()
             .border_t_1()
             .border_color(theme.surface_border)
@@ -3583,18 +3586,26 @@ impl Render for MainWindow {
                     }
                 }
             }))
-            .child(toolbar)
             .child(
                 div()
-                    .flex_1()
-                    .min_h_0()
+                    .size_full()
                     .flex()
                     .flex_row()
                     .p_2()
                     .gap_3()
                     .overflow_hidden()
                     .child(sidebar)
-                    .child(content_panel),
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .h_full()
+                            .flex()
+                            .flex_col()
+                            .overflow_hidden()
+                            .child(toolbar)
+                            .child(content_panel),
+                    ),
             )
             .when(self.show_filter_menu, |d| {
                 d.child(self.render_filter_popover(cx))
