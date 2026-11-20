@@ -5,7 +5,7 @@ use crate::filesystem::operations::{open_in_terminal, open_path};
 use crate::filesystem::scanner::{scan_directory_async, ScanMessage};
 use crate::models::file_entry::FileEntry;
 use crate::navigation::history::NavigationHistory;
-use crate::theme::{self, button, icon, icon_button, ButtonLook, RADIUS_CARD, RADIUS_ROW, RADIUS_THUMB, TITLE_BAR_HEIGHT};
+use crate::theme::{self, button, theme_button, icon, icon_button, ButtonLook, RADIUS_CARD, RADIUS_ROW, RADIUS_THUMB, TITLE_BAR_HEIGHT};
 use crate::thumbnails::ThumbnailCache;
 use gpui::{
     actions, div, img, prelude::*, px, uniform_list, AnyElement, ClickEvent, Context, CursorStyle, Div, ElementId,
@@ -141,6 +141,7 @@ pub struct MainWindow {
     pub path_input_text: String,
     pub theme_mode: theme::ThemeMode,
     pub active_theme: theme::ThemeColors,
+    pub font_size: f32,
     appearance_subscription: Option<gpui::Subscription>,
     bounds_subscription: Option<gpui::Subscription>,
 }
@@ -207,6 +208,7 @@ impl MainWindow {
                 _ => theme::ThemeMode::System,
             },
             active_theme: theme::ThemeColors::light(),
+            font_size: crate::config::Config::load().font_size,
             appearance_subscription: None,
             bounds_subscription: None,
         };
@@ -579,6 +581,24 @@ impl MainWindow {
     pub fn zoom_out(&mut self, cx: &mut Context<Self>) {
         self.zoom = (self.zoom - 20.).max(60.);
         cx.notify();
+    }
+
+    pub fn save_config(&self) {
+        let mut config = crate::config::Config::load();
+        config.show_hidden = self.show_hidden;
+        config.view_mode = match self.view_mode {
+            ViewMode::Grid => "grid",
+            ViewMode::List => "list",
+        }.to_string();
+        config.sort_by = match self.sort_by {
+            SortBy::Name => "name",
+            SortBy::Size => "size",
+            SortBy::Modified => "modified",
+            SortBy::Type => "type",
+        }.to_string();
+        config.sort_reversed = self.sort_reversed;
+        config.font_size = self.font_size;
+        config.save();
     }
 
     // --- Sub-renderers ---
@@ -979,13 +999,15 @@ impl MainWindow {
                                     ),
                             )
                             .child(
-                                button(
+                                theme_button(
                                     "toggle-hidden-btn",
                                     if self.show_hidden { ButtonLook::Primary } else { ButtonLook::Secondary },
+                                    theme,
                                 )
                                 .on_click(cx.listener(|this, _, _, cx| {
                                     this.show_hidden = !this.show_hidden;
                                     this.sort_and_filter();
+                                    this.save_config();
                                     cx.notify();
                                 }))
                                 .child(if self.show_hidden { "ON" } else { "OFF" }),
@@ -1019,13 +1041,15 @@ impl MainWindow {
                                     ),
                             )
                             .child(
-                                button(
+                                theme_button(
                                     "toggle-folders-first-btn",
                                     if self.sort_folders_first { ButtonLook::Primary } else { ButtonLook::Secondary },
+                                    theme,
                                 )
                                 .on_click(cx.listener(|this, _, _, cx| {
                                     this.sort_folders_first = !this.sort_folders_first;
                                     this.sort_and_filter();
+                                    this.save_config();
                                     cx.notify();
                                 }))
                                 .child(if self.sort_folders_first { "ON" } else { "OFF" }),
@@ -1063,24 +1087,77 @@ impl MainWindow {
                                     .flex()
                                     .gap_1p5()
                                     .child(
-                                        button("zoom-sm", if self.zoom <= 95. { ButtonLook::Primary } else { ButtonLook::Secondary })
+                                        theme_button("zoom-sm", if self.zoom <= 95. { ButtonLook::Primary } else { ButtonLook::Secondary }, theme)
                                             .on_click(cx.listener(|this, _, _, cx| { this.zoom = 80.; cx.notify(); }))
                                             .child("Small"),
                                     )
                                     .child(
-                                        button("zoom-med", if self.zoom > 95. && self.zoom <= 140. { ButtonLook::Primary } else { ButtonLook::Secondary })
+                                        theme_button("zoom-med", if self.zoom > 95. && self.zoom <= 140. { ButtonLook::Primary } else { ButtonLook::Secondary }, theme)
                                             .on_click(cx.listener(|this, _, _, cx| { this.zoom = 120.; cx.notify(); }))
                                             .child("Medium"),
                                     )
                                     .child(
-                                        button("zoom-lg", if self.zoom > 140. && self.zoom <= 200. { ButtonLook::Primary } else { ButtonLook::Secondary })
+                                        theme_button("zoom-lg", if self.zoom > 140. && self.zoom <= 200. { ButtonLook::Primary } else { ButtonLook::Secondary }, theme)
                                             .on_click(cx.listener(|this, _, _, cx| { this.zoom = 180.; cx.notify(); }))
                                             .child("Large"),
                                     )
                                     .child(
-                                        button("zoom-xl", if self.zoom > 200. { ButtonLook::Primary } else { ButtonLook::Secondary })
+                                        theme_button("zoom-xl", if self.zoom > 200. { ButtonLook::Primary } else { ButtonLook::Secondary }, theme)
                                             .on_click(cx.listener(|this, _, _, cx| { this.zoom = 250.; cx.notify(); }))
                                             .child("Huge"),
+                                    ),
+                            ),
+                    )
+                    // Option 4: Font Size (SF Pro text scaling)
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .py_1p5()
+                            .border_b_1()
+                            .border_color(theme.surface_border)
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .child(
+                                        div()
+                                            .text_size(px(theme::TEXT_BODY))
+                                            .font_weight(gpui::FontWeight::MEDIUM)
+                                            .text_color(theme.text_primary)
+                                            .child("Interface Font Size"),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(px(theme::TEXT_CAPTION))
+                                            .text_color(theme.text_faint)
+                                            .child("System typography scale (Apple SF Pro)"),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .gap_1p5()
+                                    .child(
+                                        theme_button("font-sm", if (self.font_size - 12.).abs() < 0.5 { ButtonLook::Primary } else { ButtonLook::Secondary }, theme)
+                                            .on_click(cx.listener(|this, _, _, cx| { this.font_size = 12.; this.save_config(); cx.notify(); }))
+                                            .child("12px"),
+                                    )
+                                    .child(
+                                        theme_button("font-def", if (self.font_size - 14.).abs() < 0.5 { ButtonLook::Primary } else { ButtonLook::Secondary }, theme)
+                                            .on_click(cx.listener(|this, _, _, cx| { this.font_size = 14.; this.save_config(); cx.notify(); }))
+                                            .child("14px"),
+                                    )
+                                    .child(
+                                        theme_button("font-med", if (self.font_size - 15.).abs() < 0.5 { ButtonLook::Primary } else { ButtonLook::Secondary }, theme)
+                                            .on_click(cx.listener(|this, _, _, cx| { this.font_size = 15.; this.save_config(); cx.notify(); }))
+                                            .child("15px"),
+                                    )
+                                    .child(
+                                        theme_button("font-lg", if (self.font_size - 16.).abs() < 0.5 { ButtonLook::Primary } else { ButtonLook::Secondary }, theme)
+                                            .on_click(cx.listener(|this, _, _, cx| { this.font_size = 16.; this.save_config(); cx.notify(); }))
+                                            .child("16px"),
                                     ),
                             ),
                     )
@@ -1092,7 +1169,7 @@ impl MainWindow {
                             .text_color(theme.accent)
                             .child("PERFORMANCE & MEDIA"),
                     )
-                    // Option 4: Thumbnails
+                    // Option 5: Thumbnails
                     .child(
                         div()
                             .flex()
@@ -1120,9 +1197,10 @@ impl MainWindow {
                                     ),
                             )
                             .child(
-                                button(
+                                theme_button(
                                     "toggle-thumbs-btn",
                                     if self.enable_thumbnails { ButtonLook::Primary } else { ButtonLook::Secondary },
+                                    theme,
                                 )
                                 .on_click(cx.listener(|this, _, _, cx| {
                                     this.enable_thumbnails = !this.enable_thumbnails;
@@ -1131,7 +1209,7 @@ impl MainWindow {
                                 .child(if self.enable_thumbnails { "ON" } else { "OFF" }),
                             ),
                     )
-                    // Option 5: Terminal
+                    // Option 6: Terminal
                     .child(
                         div()
                             .flex()
@@ -1157,7 +1235,7 @@ impl MainWindow {
                                     ),
                             )
                             .child(
-                                button("settings-open-term", ButtonLook::Secondary)
+                                theme_button("settings-open-term", ButtonLook::Secondary, theme)
                                     .on_click(cx.listener(|this, _, _, _| {
                                         open_in_terminal(&this.current_path);
                                     }))
@@ -1230,7 +1308,7 @@ impl MainWindow {
                                     .gap_2()
                                     .when(is_any_filter_active, |d| {
                                         d.child(
-                                            button("popover-reset-filters", ButtonLook::Ghost)
+                                            theme_button("popover-reset-filters", ButtonLook::Ghost, theme)
                                                 .on_click(cx.listener(|this, _, _, cx| this.reset_filters(cx)))
                                                 .child("Reset"),
                                         )
@@ -1262,22 +1340,22 @@ impl MainWindow {
                                     .flex()
                                     .gap_1p5()
                                     .child(
-                                        button("sort-name", if self.sort_by == SortBy::Name { ButtonLook::Primary } else { ButtonLook::Secondary })
+                                        theme_button("sort-name", if self.sort_by == SortBy::Name { ButtonLook::Primary } else { ButtonLook::Secondary }, theme)
                                             .on_click(cx.listener(|this, _, _, cx| this.toggle_sort(SortBy::Name, cx)))
                                             .child("Name"),
                                     )
                                     .child(
-                                        button("sort-mod", if self.sort_by == SortBy::Modified { ButtonLook::Primary } else { ButtonLook::Secondary })
+                                        theme_button("sort-mod", if self.sort_by == SortBy::Modified { ButtonLook::Primary } else { ButtonLook::Secondary }, theme)
                                             .on_click(cx.listener(|this, _, _, cx| this.toggle_sort(SortBy::Modified, cx)))
                                             .child("Date"),
                                     )
                                     .child(
-                                        button("sort-size", if self.sort_by == SortBy::Size { ButtonLook::Primary } else { ButtonLook::Secondary })
+                                        theme_button("sort-size", if self.sort_by == SortBy::Size { ButtonLook::Primary } else { ButtonLook::Secondary }, theme)
                                             .on_click(cx.listener(|this, _, _, cx| this.toggle_sort(SortBy::Size, cx)))
                                             .child("Size"),
                                     )
                                     .child(
-                                        button("sort-type", if self.sort_by == SortBy::Type { ButtonLook::Primary } else { ButtonLook::Secondary })
+                                        theme_button("sort-type", if self.sort_by == SortBy::Type { ButtonLook::Primary } else { ButtonLook::Secondary }, theme)
                                             .on_click(cx.listener(|this, _, _, cx| this.toggle_sort(SortBy::Type, cx)))
                                             .child("Type"),
                                     ),
@@ -1295,7 +1373,7 @@ impl MainWindow {
                                             .child("Direction:"),
                                     )
                                     .child(
-                                        button("sort-direction", ButtonLook::Secondary)
+                                        theme_button("sort-direction", ButtonLook::Secondary, theme)
                                             .on_click(cx.listener(|this, _, _, cx| {
                                                 this.sort_reversed = !this.sort_reversed;
                                                 this.sort_and_filter();
@@ -1326,37 +1404,37 @@ impl MainWindow {
                                     .flex_wrap()
                                     .gap_1p5()
                                     .child(
-                                        button("f-type-all", if self.type_filter == TypeFilter::All { ButtonLook::Primary } else { ButtonLook::Secondary })
+                                        theme_button("f-type-all", if self.type_filter == TypeFilter::All { ButtonLook::Primary } else { ButtonLook::Secondary }, theme)
                                             .on_click(cx.listener(|this, _, _, cx| { this.type_filter = TypeFilter::All; this.sort_and_filter(); cx.notify(); }))
                                             .child("All"),
                                     )
                                     .child(
-                                        button("f-type-folders", if self.type_filter == TypeFilter::Folders { ButtonLook::Primary } else { ButtonLook::Secondary })
+                                        theme_button("f-type-folders", if self.type_filter == TypeFilter::Folders { ButtonLook::Primary } else { ButtonLook::Secondary }, theme)
                                             .on_click(cx.listener(|this, _, _, cx| { this.type_filter = TypeFilter::Folders; this.sort_and_filter(); cx.notify(); }))
                                             .child("Folders"),
                                     )
                                     .child(
-                                        button("f-type-docs", if self.type_filter == TypeFilter::Documents { ButtonLook::Primary } else { ButtonLook::Secondary })
+                                        theme_button("f-type-docs", if self.type_filter == TypeFilter::Documents { ButtonLook::Primary } else { ButtonLook::Secondary }, theme)
                                             .on_click(cx.listener(|this, _, _, cx| { this.type_filter = TypeFilter::Documents; this.sort_and_filter(); cx.notify(); }))
                                             .child("Docs"),
                                     )
                                     .child(
-                                        button("f-type-images", if self.type_filter == TypeFilter::Images { ButtonLook::Primary } else { ButtonLook::Secondary })
+                                        theme_button("f-type-images", if self.type_filter == TypeFilter::Images { ButtonLook::Primary } else { ButtonLook::Secondary }, theme)
                                             .on_click(cx.listener(|this, _, _, cx| { this.type_filter = TypeFilter::Images; this.sort_and_filter(); cx.notify(); }))
                                             .child("Images"),
                                     )
                                     .child(
-                                        button("f-type-media", if self.type_filter == TypeFilter::Media { ButtonLook::Primary } else { ButtonLook::Secondary })
+                                        theme_button("f-type-media", if self.type_filter == TypeFilter::Media { ButtonLook::Primary } else { ButtonLook::Secondary }, theme)
                                             .on_click(cx.listener(|this, _, _, cx| { this.type_filter = TypeFilter::Media; this.sort_and_filter(); cx.notify(); }))
                                             .child("Media"),
                                     )
                                     .child(
-                                        button("f-type-code", if self.type_filter == TypeFilter::Code { ButtonLook::Primary } else { ButtonLook::Secondary })
+                                        theme_button("f-type-code", if self.type_filter == TypeFilter::Code { ButtonLook::Primary } else { ButtonLook::Secondary }, theme)
                                             .on_click(cx.listener(|this, _, _, cx| { this.type_filter = TypeFilter::Code; this.sort_and_filter(); cx.notify(); }))
                                             .child("Code"),
                                     )
                                     .child(
-                                        button("f-type-archives", if self.type_filter == TypeFilter::Archives { ButtonLook::Primary } else { ButtonLook::Secondary })
+                                        theme_button("f-type-archives", if self.type_filter == TypeFilter::Archives { ButtonLook::Primary } else { ButtonLook::Secondary }, theme)
                                             .on_click(cx.listener(|this, _, _, cx| { this.type_filter = TypeFilter::Archives; this.sort_and_filter(); cx.notify(); }))
                                             .child("Archives"),
                                     ),
@@ -1383,22 +1461,22 @@ impl MainWindow {
                                     .flex_wrap()
                                     .gap_1p5()
                                     .child(
-                                        button("f-date-any", if self.date_filter == DateFilter::Any { ButtonLook::Primary } else { ButtonLook::Secondary })
+                                        theme_button("f-date-any", if self.date_filter == DateFilter::Any { ButtonLook::Primary } else { ButtonLook::Secondary }, theme)
                                             .on_click(cx.listener(|this, _, _, cx| { this.date_filter = DateFilter::Any; this.sort_and_filter(); cx.notify(); }))
                                             .child("Any time"),
                                     )
                                     .child(
-                                        button("f-date-today", if self.date_filter == DateFilter::Today { ButtonLook::Primary } else { ButtonLook::Secondary })
+                                        theme_button("f-date-today", if self.date_filter == DateFilter::Today { ButtonLook::Primary } else { ButtonLook::Secondary }, theme)
                                             .on_click(cx.listener(|this, _, _, cx| { this.date_filter = DateFilter::Today; this.sort_and_filter(); cx.notify(); }))
                                             .child("Today"),
                                     )
                                     .child(
-                                        button("f-date-7d", if self.date_filter == DateFilter::Last7Days { ButtonLook::Primary } else { ButtonLook::Secondary })
+                                        theme_button("f-date-7d", if self.date_filter == DateFilter::Last7Days { ButtonLook::Primary } else { ButtonLook::Secondary }, theme)
                                             .on_click(cx.listener(|this, _, _, cx| { this.date_filter = DateFilter::Last7Days; this.sort_and_filter(); cx.notify(); }))
                                             .child("Past 7 Days"),
                                     )
                                     .child(
-                                        button("f-date-30d", if self.date_filter == DateFilter::Last30Days { ButtonLook::Primary } else { ButtonLook::Secondary })
+                                        theme_button("f-date-30d", if self.date_filter == DateFilter::Last30Days { ButtonLook::Primary } else { ButtonLook::Secondary }, theme)
                                             .on_click(cx.listener(|this, _, _, cx| { this.date_filter = DateFilter::Last30Days; this.sort_and_filter(); cx.notify(); }))
                                             .child("Past 30 Days"),
                                     ),
@@ -1424,22 +1502,22 @@ impl MainWindow {
                                     .flex()
                                     .gap_1p5()
                                     .child(
-                                        button("f-size-any", if self.size_filter == SizeFilter::Any { ButtonLook::Primary } else { ButtonLook::Secondary })
+                                        theme_button("f-size-any", if self.size_filter == SizeFilter::Any { ButtonLook::Primary } else { ButtonLook::Secondary }, theme)
                                             .on_click(cx.listener(|this, _, _, cx| { this.size_filter = SizeFilter::Any; this.sort_and_filter(); cx.notify(); }))
                                             .child("Any"),
                                     )
                                     .child(
-                                        button("f-size-small", if self.size_filter == SizeFilter::Small { ButtonLook::Primary } else { ButtonLook::Secondary })
+                                        theme_button("f-size-small", if self.size_filter == SizeFilter::Small { ButtonLook::Primary } else { ButtonLook::Secondary }, theme)
                                             .on_click(cx.listener(|this, _, _, cx| { this.size_filter = SizeFilter::Small; this.sort_and_filter(); cx.notify(); }))
                                             .child("< 1 MB"),
                                     )
                                     .child(
-                                        button("f-size-med", if self.size_filter == SizeFilter::Medium { ButtonLook::Primary } else { ButtonLook::Secondary })
+                                        theme_button("f-size-med", if self.size_filter == SizeFilter::Medium { ButtonLook::Primary } else { ButtonLook::Secondary }, theme)
                                             .on_click(cx.listener(|this, _, _, cx| { this.size_filter = SizeFilter::Medium; this.sort_and_filter(); cx.notify(); }))
                                             .child("1-100 MB"),
                                     )
                                     .child(
-                                        button("f-size-large", if self.size_filter == SizeFilter::Large { ButtonLook::Primary } else { ButtonLook::Secondary })
+                                        theme_button("f-size-large", if self.size_filter == SizeFilter::Large { ButtonLook::Primary } else { ButtonLook::Secondary }, theme)
                                             .on_click(cx.listener(|this, _, _, cx| { this.size_filter = SizeFilter::Large; this.sort_and_filter(); cx.notify(); }))
                                             .child("> 100 MB"),
                                     ),
@@ -1458,7 +1536,7 @@ impl MainWindow {
                             .text_color(theme.text_faint)
                             .child(format!("Showing {} of {} items", filtered_count, total_count))
                             .child(
-                                button("done-filter-popover", ButtonLook::Primary)
+                                theme_button("done-filter-popover", ButtonLook::Primary, theme)
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.show_filter_menu = false;
                                         cx.notify();
@@ -2972,7 +3050,7 @@ impl MainWindow {
         let card_width = self.zoom;
         let thumb_area_height = (card_width * 0.72).clamp(40., 220.);
         let is_compact = card_width < 95.;
-        let text_height = if is_compact { 28. } else { 38. };
+        let text_height = if is_compact { (self.font_size * 2.0).max(28.) } else { (self.font_size * 2.8).max(40.) };
         let card_height = thumb_area_height + text_height + 14.;
         let entries_count = self.filtered_indices.len();
 
@@ -3065,7 +3143,7 @@ impl MainWindow {
                                     .overflow_hidden()
                                     .child(
                                         div()
-                                            .text_size(px(if is_compact { 11. } else { theme::TEXT_SMALL }))
+                                            .text_size(px(if is_compact { (self.font_size * 0.85).max(11.) } else { (self.font_size * 0.95).max(13.) }))
                                             .text_color(theme.text_primary)
                                             .text_center()
                                             .line_clamp(2)
@@ -3081,7 +3159,7 @@ impl MainWindow {
                                     .when(!is_compact, |d| {
                                         d.child(
                                             div()
-                                                .text_size(px(theme::TEXT_CAPTION))
+                                                .text_size(px((self.font_size * 0.82).max(11.)))
                                                 .text_color(theme.text_faint)
                                                 .child(entry.formatted_size()),
                                         )
@@ -3389,6 +3467,7 @@ impl Render for MainWindow {
         div()
             .id("shark-window-root")
             .relative()
+            .font_family("SF Pro")
             .track_focus(&focus_handle)
             .size_full()
             .bg(theme.canvas)

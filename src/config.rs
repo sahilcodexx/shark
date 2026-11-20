@@ -29,6 +29,9 @@ pub struct Config {
     /// Theme appearance mode: "system", "light", "dark"
     #[serde(default = "default_theme")]
     pub theme: String,
+    /// Interface font size in pixels (default 14.0)
+    #[serde(default = "default_font_size")]
+    pub font_size: f32,
 }
 
 fn default_background_mode() -> String {
@@ -37,6 +40,10 @@ fn default_background_mode() -> String {
 
 fn default_theme() -> String {
     "system".to_string()
+}
+
+fn default_font_size() -> f32 {
+    14.0
 }
 
 impl Default for Config {
@@ -64,6 +71,7 @@ impl Default for Config {
             window_height: 700,
             background_mode: "solid".to_string(),
             theme: "system".to_string(),
+            font_size: 14.0,
         }
     }
 }

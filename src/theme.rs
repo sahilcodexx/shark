@@ -19,7 +19,7 @@ pub const TEXT_HEADER: f32 = 16.;
 
 pub const TITLE_BAR_HEIGHT: f32 = 50.;
 pub const ROW_HEIGHT: f32 = 32.;
-pub const BUTTON_HEIGHT: f32 = 28.;
+pub const BUTTON_HEIGHT: f32 = 32.;
 
 pub const RADIUS_PANEL: f32 = 14.;
 pub const RADIUS_SIDEBAR: f32 = 14.;
@@ -301,6 +301,50 @@ pub enum ButtonLook {
     Disabled,
 }
 
+pub fn theme_button(id: impl Into<ElementId>, look: ButtonLook, theme: &ThemeColors) -> Stateful<Div> {
+    div()
+        .id(id)
+        .role(Role::Button)
+        .h(px(BUTTON_HEIGHT))
+        .px(px(if look == ButtonLook::Ghost { 10. } else { 14. }))
+        .flex_shrink_0()
+        .rounded_full()
+        .flex()
+        .items_center()
+        .justify_center()
+        .gap_1()
+        .text_size(px(TEXT_SMALL))
+        .font_weight(if look == ButtonLook::Primary { FontWeight::SEMIBOLD } else { FontWeight::NORMAL })
+        .when(look != ButtonLook::Disabled, |d| d.cursor_pointer())
+        .map(|d| match look {
+            ButtonLook::Ghost => d
+                .text_color(theme.text_muted)
+                .hover(|s| s.bg(theme.button_hover).text_color(theme.text_primary))
+                .active(|s| s.bg(theme.selection)),
+            ButtonLook::Secondary => d
+                .bg(theme.button_fill)
+                .border_1()
+                .border_color(theme.button_border)
+                .text_color(theme.text_primary)
+                .shadow(control_shadow(theme))
+                .hover(|s| s.bg(theme.button_hover))
+                .active(|s| s.bg(theme.sidebar_selected)),
+            ButtonLook::Primary => d
+                .bg(theme.accent)
+                .text_color(if theme.is_dark { gpui::black() } else { gpui::white() })
+                .shadow(control_shadow(theme))
+                .hover(|s| s.opacity(0.92))
+                .active(|s| s.opacity(0.85)),
+            ButtonLook::Destructive => d
+                .bg(danger())
+                .text_color(gpui::white())
+                .hover(|s| s.opacity(0.9)),
+            ButtonLook::Disabled => d
+                .bg(theme.button_fill.opacity(0.5))
+                .text_color(theme.text_faint),
+        })
+}
+
 pub fn button(id: impl Into<ElementId>, look: ButtonLook) -> Stateful<Div> {
     div()
         .id(id)
@@ -308,7 +352,7 @@ pub fn button(id: impl Into<ElementId>, look: ButtonLook) -> Stateful<Div> {
         .h(px(BUTTON_HEIGHT))
         .px(px(if look == ButtonLook::Ghost { 8. } else { 12. }))
         .flex_shrink_0()
-        .rounded(px(RADIUS_ROW))
+        .rounded_full()
         .flex()
         .items_center()
         .justify_center()
@@ -353,7 +397,7 @@ pub fn icon_button(
         .id(id)
         .role(Role::Button)
         .size(px(BUTTON_HEIGHT))
-        .rounded(px(RADIUS_ROW))
+        .rounded_full()
         .flex()
         .items_center()
         .justify_center()
@@ -362,7 +406,7 @@ pub fn icon_button(
     if !enabled {
         return base
             .text_color(text_faint())
-            .child(icon(name, 14.).text_color(text_faint()));
+            .child(icon(name, 16.).text_color(text_faint()));
     }
 
     let ink = if active { accent() } else { text_muted() };
@@ -372,7 +416,7 @@ pub fn icon_button(
         .when(active, |d| d.bg(selection_fill()))
         .hover(|s| s.bg(hover_fill()).text_color(text_primary()))
         .active(|s| s.bg(selection_fill()))
-        .child(icon(name, 14.).text_color(ink))
+        .child(icon(name, 16.).text_color(ink))
 }
 
 /// macOS-style joint container for grouped buttons (Share, Tag, More in Image 2)
@@ -383,12 +427,12 @@ pub fn macos_joint_container(id: impl Into<ElementId>, theme: &ThemeColors) -> S
         .bg(theme.button_fill)
         .border_1()
         .border_color(theme.button_border)
-        .rounded(px(8.))
+        .rounded_full()
         .shadow(control_shadow(theme))
         .flex()
         .items_center()
-        .p(px(2.))
-        .gap(px(1.))
+        .px(px(3.))
+        .gap(px(2.))
         .flex_shrink_0()
 }
 
@@ -404,8 +448,8 @@ pub fn macos_capsule_container(id: impl Into<ElementId>, theme: &ThemeColors) ->
         .shadow(control_shadow(theme))
         .flex()
         .items_center()
-        .p(px(2.))
-        .gap(px(1.))
+        .px(px(3.))
+        .gap(px(2.))
         .flex_shrink_0()
 }
 
@@ -420,9 +464,9 @@ pub fn macos_joint_button(
     let base = div()
         .id(id)
         .role(Role::Button)
-        .h(px(BUTTON_HEIGHT - 4.))
-        .px(px(7.))
-        .rounded(px(6.))
+        .h(px(BUTTON_HEIGHT - 6.))
+        .px(px(8.))
+        .rounded_full()
         .flex()
         .items_center()
         .justify_center()
@@ -431,7 +475,7 @@ pub fn macos_joint_button(
     if !enabled {
         return base
             .text_color(theme.text_faint)
-            .child(icon(name, 13.).text_color(theme.text_faint));
+            .child(icon(name, 16.).text_color(theme.text_faint));
     }
 
     base
@@ -445,7 +489,7 @@ pub fn macos_joint_button(
         .when(!active, |d| {
             d.hover(|s| s.bg(theme.button_hover).text_color(theme.text_primary))
         })
-        .child(icon(name, 13.).text_color(if active { theme.text_primary } else { theme.text_muted }))
+        .child(icon(name, 16.).text_color(if active { theme.text_primary } else { theme.text_muted }))
 }
 
 /// macOS-style segmented container for grouped buttons (e.g. < | > navigation, view switchers)
