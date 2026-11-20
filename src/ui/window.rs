@@ -884,12 +884,12 @@ impl MainWindow {
             )
     }
 
-    fn render_settings_modal(&self, cx: &mut Context<Self>) -> AnyElement {
+    fn render_settings_modal(&self, theme: &theme::ThemeColors, cx: &mut Context<Self>) -> AnyElement {
         div()
             .id("settings-modal-backdrop")
             .absolute()
             .inset_0()
-            .bg(gpui::rgba(0x00000088))
+            .bg(if theme.is_dark { gpui::rgba(0x00000088) } else { gpui::rgba(0x00000040) })
             .flex()
             .items_center()
             .justify_center()
@@ -902,9 +902,10 @@ impl MainWindow {
                 div()
                     .id("settings-modal-content")
                     .w(px(500.))
-                    .bg(theme::shell_fill())
+                    .bg(theme.card)
                     .border_1()
-                    .border_color(theme::border_color())
+                    .border_color(theme.surface_border)
+                    .shadow(theme::floating_panel_shadows(theme))
                     .rounded(px(RADIUS_CARD))
                     .p_5()
                     .flex()
@@ -923,12 +924,12 @@ impl MainWindow {
                                     .flex()
                                     .items_center()
                                     .gap_2()
-                                    .child(icon("settings", 18.).text_color(theme::accent()))
+                                    .child(icon("settings", 18.).text_color(theme.accent))
                                     .child(
                                         div()
                                             .text_size(px(theme::TEXT_HEADER))
                                             .font_weight(gpui::FontWeight::BOLD)
-                                            .text_color(theme::text_primary())
+                                            .text_color(theme.text_primary)
                                             .child("Settings & Preferences"),
                                     ),
                             )
@@ -945,7 +946,7 @@ impl MainWindow {
                         div()
                             .text_size(px(11.))
                             .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .text_color(theme::accent())
+                            .text_color(theme.accent)
                             .child("VIEW & LAYOUT"),
                     )
                     // Option 1: Show Hidden Files
@@ -956,7 +957,7 @@ impl MainWindow {
                             .justify_between()
                             .py_1p5()
                             .border_b_1()
-                            .border_color(theme::border_subtle())
+                            .border_color(theme.surface_border)
                             .child(
                                 div()
                                     .flex()
@@ -965,13 +966,13 @@ impl MainWindow {
                                         div()
                                             .text_size(px(theme::TEXT_BODY))
                                             .font_weight(gpui::FontWeight::MEDIUM)
-                                            .text_color(theme::text_primary())
+                                            .text_color(theme.text_primary)
                                             .child("Show Hidden Files"),
                                     )
                                     .child(
                                         div()
                                             .text_size(px(theme::TEXT_CAPTION))
-                                            .text_color(theme::text_faint())
+                                            .text_color(theme.text_faint)
                                             .child("Display dotfiles and hidden folders (Ctrl+H)"),
                                     ),
                             )
@@ -996,7 +997,7 @@ impl MainWindow {
                             .justify_between()
                             .py_1p5()
                             .border_b_1()
-                            .border_color(theme::border_subtle())
+                            .border_color(theme.surface_border)
                             .child(
                                 div()
                                     .flex()
@@ -1005,13 +1006,13 @@ impl MainWindow {
                                         div()
                                             .text_size(px(theme::TEXT_BODY))
                                             .font_weight(gpui::FontWeight::MEDIUM)
-                                            .text_color(theme::text_primary())
+                                            .text_color(theme.text_primary)
                                             .child("Sort Folders First"),
                                     )
                                     .child(
                                         div()
                                             .text_size(px(theme::TEXT_CAPTION))
-                                            .text_color(theme::text_faint())
+                                            .text_color(theme.text_faint)
                                             .child("Keep directories grouped above files"),
                                     ),
                             )
@@ -1036,7 +1037,7 @@ impl MainWindow {
                             .justify_between()
                             .py_1p5()
                             .border_b_1()
-                            .border_color(theme::border_subtle())
+                            .border_color(theme.surface_border)
                             .child(
                                 div()
                                     .flex()
@@ -1045,13 +1046,13 @@ impl MainWindow {
                                         div()
                                             .text_size(px(theme::TEXT_BODY))
                                             .font_weight(gpui::FontWeight::MEDIUM)
-                                            .text_color(theme::text_primary())
+                                            .text_color(theme.text_primary)
                                             .child("Grid Icon Size"),
                                     )
                                     .child(
                                         div()
                                             .text_size(px(theme::TEXT_CAPTION))
-                                            .text_color(theme::text_faint())
+                                            .text_color(theme.text_faint)
                                             .child("Zoom level for grid thumbnails"),
                                     ),
                             )
@@ -1081,7 +1082,7 @@ impl MainWindow {
                         div()
                             .text_size(px(11.))
                             .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .text_color(theme::accent())
+                            .text_color(theme.accent)
                             .child("PERFORMANCE & MEDIA"),
                     )
                     // Option 4: Thumbnails
@@ -1092,7 +1093,7 @@ impl MainWindow {
                             .justify_between()
                             .py_1p5()
                             .border_b_1()
-                            .border_color(theme::border_subtle())
+                            .border_color(theme.surface_border)
                             .child(
                                 div()
                                     .flex()
@@ -1101,13 +1102,13 @@ impl MainWindow {
                                         div()
                                             .text_size(px(theme::TEXT_BODY))
                                             .font_weight(gpui::FontWeight::MEDIUM)
-                                            .text_color(theme::text_primary())
+                                            .text_color(theme.text_primary)
                                             .child("Thumbnail Previews"),
                                     )
                                     .child(
                                         div()
                                             .text_size(px(theme::TEXT_CAPTION))
-                                            .text_color(theme::text_faint())
+                                            .text_color(theme.text_faint)
                                             .child("Render image and video thumbnails"),
                                     ),
                             )
@@ -1138,13 +1139,13 @@ impl MainWindow {
                                         div()
                                             .text_size(px(theme::TEXT_BODY))
                                             .font_weight(gpui::FontWeight::MEDIUM)
-                                            .text_color(theme::text_primary())
+                                            .text_color(theme.text_primary)
                                             .child("External Terminal"),
                                     )
                                     .child(
                                         div()
                                             .text_size(px(theme::TEXT_CAPTION))
-                                            .text_color(theme::text_faint())
+                                            .text_color(theme.text_faint)
                                             .child("Launch shell at current directory"),
                                     ),
                             )
@@ -1160,7 +1161,7 @@ impl MainWindow {
             .into_any_element()
     }
 
-    fn render_filter_popover(&self, cx: &mut Context<Self>) -> AnyElement {
+    fn render_filter_popover(&self, theme: &theme::ThemeColors, cx: &mut Context<Self>) -> AnyElement {
         let is_any_filter_active = self.has_active_filters();
         let total_count = self.entries.len();
         let filtered_count = self.filtered_indices.len();
@@ -1169,7 +1170,7 @@ impl MainWindow {
             .id("filter-popover-backdrop")
             .absolute()
             .inset_0()
-            .bg(gpui::rgba(0x00000077))
+            .bg(if theme.is_dark { gpui::rgba(0x00000077) } else { gpui::rgba(0x00000030) })
             .flex()
             .items_start()
             .justify_end()
@@ -1184,9 +1185,10 @@ impl MainWindow {
                 div()
                     .id("filter-popover-card")
                     .w(px(350.))
-                    .bg(theme::shell_fill())
+                    .bg(theme.card)
                     .border_1()
-                    .border_color(theme::border_color())
+                    .border_color(theme.surface_border)
+                    .shadow(theme::floating_panel_shadows(theme))
                     .rounded(px(12.))
                     .p_4()
                     .flex()
@@ -1205,12 +1207,12 @@ impl MainWindow {
                                     .flex()
                                     .items_center()
                                     .gap_2()
-                                    .child(icon("filter", 16.).text_color(theme::accent()))
+                                    .child(icon("filter", 16.).text_color(theme.accent))
                                     .child(
                                         div()
                                             .text_size(px(14.))
                                             .font_weight(gpui::FontWeight::BOLD)
-                                            .text_color(theme::text_primary())
+                                            .text_color(theme.text_primary)
                                             .child("Filter & Sort"),
                                     ),
                             )
@@ -1245,7 +1247,7 @@ impl MainWindow {
                                 div()
                                     .text_size(px(11.))
                                     .font_weight(gpui::FontWeight::SEMIBOLD)
-                                    .text_color(theme::text_faint())
+                                    .text_color(theme.text_faint)
                                     .child("SORT BY"),
                             )
                             .child(
@@ -1282,7 +1284,7 @@ impl MainWindow {
                                     .child(
                                         div()
                                             .text_size(px(12.))
-                                            .text_color(theme::text_muted())
+                                            .text_color(theme.text_muted)
                                             .child("Direction:"),
                                     )
                                     .child(
@@ -1297,7 +1299,7 @@ impl MainWindow {
                             ),
                     )
                     // Divider
-                    .child(div().h(px(1.)).w_full().bg(theme::border_subtle()))
+                    .child(div().h(px(1.)).w_full().bg(theme.surface_border))
                     // Section 2: Filter by Type
                     .child(
                         div()
@@ -1308,7 +1310,7 @@ impl MainWindow {
                                 div()
                                     .text_size(px(11.))
                                     .font_weight(gpui::FontWeight::SEMIBOLD)
-                                    .text_color(theme::text_faint())
+                                    .text_color(theme.text_faint)
                                     .child("FILTER BY TYPE"),
                             )
                             .child(
@@ -1354,7 +1356,7 @@ impl MainWindow {
                             ),
                     )
                     // Divider
-                    .child(div().h(px(1.)).w_full().bg(theme::border_subtle()))
+                    .child(div().h(px(1.)).w_full().bg(theme.surface_border))
                     // Section 3: Filter by Date Modified
                     .child(
                         div()
@@ -1365,7 +1367,7 @@ impl MainWindow {
                                 div()
                                     .text_size(px(11.))
                                     .font_weight(gpui::FontWeight::SEMIBOLD)
-                                    .text_color(theme::text_faint())
+                                    .text_color(theme.text_faint)
                                     .child("DATE MODIFIED"),
                             )
                             .child(
@@ -1396,7 +1398,7 @@ impl MainWindow {
                             ),
                     )
                     // Divider
-                    .child(div().h(px(1.)).w_full().bg(theme::border_subtle()))
+                    .child(div().h(px(1.)).w_full().bg(theme.surface_border))
                     // Section 4: Filter by Size
                     .child(
                         div()
@@ -1407,7 +1409,7 @@ impl MainWindow {
                                 div()
                                     .text_size(px(11.))
                                     .font_weight(gpui::FontWeight::SEMIBOLD)
-                                    .text_color(theme::text_faint())
+                                    .text_color(theme.text_faint)
                                     .child("FILE SIZE"),
                             )
                             .child(
@@ -1441,12 +1443,12 @@ impl MainWindow {
                         div()
                             .pt_2()
                             .border_t_1()
-                            .border_color(theme::border_subtle())
+                            .border_color(theme.surface_border)
                             .flex()
                             .items_center()
                             .justify_between()
                             .text_size(px(11.))
-                            .text_color(theme::text_faint())
+                            .text_color(theme.text_faint)
                             .child(format!("Showing {} of {} items", filtered_count, total_count))
                             .child(
                                 button("done-filter-popover", ButtonLook::Primary)
@@ -1875,7 +1877,7 @@ impl MainWindow {
                         title: entry.name.clone(),
                         subtitle: Some(format!("{} • {}", entry.type_description(), entry.formatted_size())),
                         icon_name: if entry.is_directory { "folder" } else { entry.icon_name },
-                        shortcut: Some(if entry.is_directory { "Open" } else { "Run" }),
+                        shortcut: None,
                         action: if entry.is_directory {
                             PaletteAction::Navigate(entry.path.clone())
                         } else {
@@ -1955,7 +1957,7 @@ impl MainWindow {
         }
     }
 
-    fn render_command_palette(&self, cx: &mut Context<Self>) -> AnyElement {
+    fn render_command_palette(&self, theme: &theme::ThemeColors, cx: &mut Context<Self>) -> AnyElement {
         let items = self.get_palette_items();
         let selected_idx = self.command_palette_selected;
 
@@ -1970,7 +1972,7 @@ impl MainWindow {
                             .h(px(1.))
                             .mx_2()
                             .my_1p5()
-                            .bg(gpui::rgba(0xffffff0d))
+                            .bg(theme.surface_border)
                             .into_any_element(),
                     );
                 }
@@ -1982,7 +1984,7 @@ impl MainWindow {
                         .pb_1()
                         .text_size(px(11.))
                         .font_weight(gpui::FontWeight::SEMIBOLD)
-                        .text_color(gpui::rgba(0xffffff60))
+                        .text_color(theme.text_faint)
                         .child(item.section)
                         .into_any_element(),
                 );
@@ -2005,10 +2007,10 @@ impl MainWindow {
                 .justify_between()
                 .cursor_pointer()
                 .when(is_selected, |d| {
-                    d.bg(gpui::rgba(0xffffff15))
+                    d.bg(theme.sidebar_selected)
                 })
                 .when(!is_selected, |d| {
-                    d.hover(|s| s.bg(gpui::rgba(0xffffff09)))
+                    d.hover(|s| s.bg(theme.sidebar_hover))
                 })
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.execute_palette_action(action.clone(), cx);
@@ -2018,7 +2020,10 @@ impl MainWindow {
                         .flex()
                         .items_center()
                         .gap_3()
-                        .child(icon(icon_name, 16.).text_color(if is_selected { gpui::rgba(0xffffffff) } else { gpui::rgba(0xffffffa0) }))
+                        .child(
+                            icon(icon_name, 16.)
+                                .text_color(if is_selected { theme.text_primary } else { theme.text_muted })
+                        )
                         .child(
                             div()
                                 .flex()
@@ -2027,7 +2032,7 @@ impl MainWindow {
                                 .child(
                                     div()
                                         .text_size(px(13.))
-                                        .text_color(if is_selected { gpui::rgba(0xffffffff) } else { gpui::rgba(0xffffffdd) })
+                                        .text_color(theme.text_primary)
                                         .font_weight(if is_selected { gpui::FontWeight::MEDIUM } else { gpui::FontWeight::NORMAL })
                                         .child(title),
                                 )
@@ -2035,7 +2040,7 @@ impl MainWindow {
                                     d.child(
                                         div()
                                             .text_size(px(11.))
-                                            .text_color(gpui::rgba(0xffffff50))
+                                            .text_color(theme.text_faint)
                                             .child(format!("• {}", sub)),
                                     )
                                 }),
@@ -2047,7 +2052,7 @@ impl MainWindow {
                             div()
                                 .text_size(px(12.))
                                 .font_weight(gpui::FontWeight::MEDIUM)
-                                .text_color(if is_selected { gpui::rgba(0xffffffaa) } else { gpui::rgba(0xffffff50) })
+                                .text_color(theme.text_faint)
                                 .child(sc),
                         )
                     } else {
@@ -2056,11 +2061,11 @@ impl MainWindow {
                                 .px_1p5()
                                 .py_0p5()
                                 .rounded(px(4.))
-                                .bg(gpui::rgba(0xffffff0d))
+                                .bg(theme.button_fill)
                                 .border_1()
-                                .border_color(gpui::rgba(0xffffff10))
+                                .border_color(theme.button_border)
                                 .text_size(px(10.))
-                                .text_color(if is_selected { gpui::rgba(0xffffffff) } else { gpui::rgba(0xffffff70) })
+                                .text_color(theme.text_muted)
                                 .child(sc),
                         )
                     }
@@ -2120,48 +2125,52 @@ impl MainWindow {
                 };
                 let icon_color = gpui::rgba(entry.icon_color_hex());
                 let badge = entry.format_badge();
+                let parent_folder = entry.path.parent()
+                    .and_then(|p| p.file_name())
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "/".to_string());
 
                 div()
-                    .w(px(290.))
+                    .w(px(310.))
                     .h_full()
-                    .bg(gpui::rgba(0x0e0e11fa))
+                    .bg(if theme.is_dark { gpui::rgba(0x0e0e11fa) } else { gpui::rgba(0xf4f4f7ee) })
                     .p_4()
                     .flex()
                     .flex_col()
-                    .justify_between()
                     .gap_3()
                     .child(
                         div()
                             .flex()
                             .flex_col()
                             .items_center()
-                            .gap_2p5()
-                            // Thumbnail / Icon card
+                            .gap_3()
+                            // Thumbnail / Icon card - bigger preview!
                             .child(
                                 div()
-                                    .h(px(130.))
+                                    .h(px(180.))
                                     .w_full()
-                                    .rounded(px(8.))
-                                    .bg(gpui::rgba(0x00000030))
+                                    .rounded(px(10.))
+                                    .bg(if theme.is_dark { gpui::rgba(0x00000030) } else { gpui::rgba(0x00000006) })
                                     .border_1()
-                                    .border_color(gpui::rgba(0xffffff0d))
+                                    .border_color(theme.surface_border)
                                     .flex()
                                     .flex_col()
                                     .items_center()
                                     .justify_center()
                                     .gap_2()
+                                    .overflow_hidden()
                                     .child(match thumb_path {
                                         Some(p) => img(p)
-                                            .max_h(px(120.))
-                                            .max_w(px(200.))
-                                            .rounded(px(6.))
+                                            .max_h(px(170.))
+                                            .max_w(px(270.))
+                                            .rounded(px(8.))
                                             .into_any_element(),
                                         None => div()
                                             .flex()
                                             .flex_col()
                                             .items_center()
-                                            .gap_2()
-                                            .child(icon(entry.icon_name, 48.).text_color(icon_color))
+                                            .gap_2p5()
+                                            .child(icon(entry.icon_name, 64.).text_color(icon_color))
                                             .when_some(badge, |d, b| {
                                                 d.child(
                                                     div()
@@ -2184,85 +2193,84 @@ impl MainWindow {
                             .child(
                                 div()
                                     .text_size(px(14.))
-                                    .font_weight(gpui::FontWeight::BOLD)
-                                    .text_color(gpui::white())
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .text_color(theme.text_primary)
                                     .text_center()
                                     .max_w_full()
                                     .overflow_hidden()
                                     .child(entry.name.clone()),
                             )
-                            // Metadata Table
+                            // Metadata Table (clean, no permissions row!)
                             .child(
                                 div()
                                     .w_full()
-                                    .p_2p5()
-                                    .rounded(px(6.))
-                                    .bg(gpui::rgba(0xffffff06))
+                                    .p_3()
+                                    .rounded(px(8.))
+                                    .bg(if theme.is_dark { gpui::rgba(0xffffff06) } else { gpui::rgba(0x00000004) })
+                                    .border_1()
+                                    .border_color(theme.surface_border)
                                     .flex()
                                     .flex_col()
-                                    .gap_1p5()
+                                    .gap_2()
                                     .text_size(px(11.))
                                     .child(
                                         div()
                                             .flex()
                                             .justify_between()
-                                            .child(div().text_color(gpui::rgba(0xffffff50)).child("Type"))
-                                            .child(div().text_color(gpui::rgba(0xffffffcc)).child(entry.type_description())),
+                                            .items_center()
+                                            .child(div().text_color(theme.text_faint).child("Type"))
+                                            .child(div().font_weight(gpui::FontWeight::MEDIUM).text_color(theme.text_primary).child(entry.type_description())),
                                     )
                                     .child(
                                         div()
                                             .flex()
                                             .justify_between()
-                                            .child(div().text_color(gpui::rgba(0xffffff50)).child("Size"))
-                                            .child(div().text_color(gpui::rgba(0xffffffcc)).child(entry.formatted_size())),
+                                            .items_center()
+                                            .child(div().text_color(theme.text_faint).child("Size"))
+                                            .child(div().font_weight(gpui::FontWeight::MEDIUM).text_color(theme.text_primary).child(entry.formatted_size())),
                                     )
                                     .child(
                                         div()
                                             .flex()
                                             .justify_between()
-                                            .child(div().text_color(gpui::rgba(0xffffff50)).child("Modified"))
-                                            .child(div().text_color(gpui::rgba(0xffffffcc)).child(entry.formatted_modified())),
+                                            .items_center()
+                                            .child(div().text_color(theme.text_faint).child("Modified"))
+                                            .child(div().font_weight(gpui::FontWeight::MEDIUM).text_color(theme.text_primary).child(entry.formatted_modified())),
                                     )
                                     .child(
                                         div()
                                             .flex()
                                             .justify_between()
-                                            .child(div().text_color(gpui::rgba(0xffffff50)).child("Permissions"))
-                                            .child(div().text_color(gpui::rgba(0xffffffcc)).child(entry.formatted_permissions())),
+                                            .items_center()
+                                            .child(div().text_color(theme.text_faint).child("Where"))
+                                            .child(div().font_weight(gpui::FontWeight::MEDIUM).text_color(theme.text_muted).child(parent_folder)),
                                     ),
                             ),
                     )
-                    .child(
-                        button("preview-open-btn", ButtonLook::Primary)
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.execute_palette_action(item_action.clone(), cx);
-                            }))
-                            .child(if entry.is_directory { "Open Folder ↵" } else { "Open File ↵" }),
-                    )
             } else {
                 div()
-                    .w(px(290.))
+                    .w(px(310.))
                     .h_full()
-                    .bg(gpui::rgba(0x0e0e11fa))
+                    .bg(if theme.is_dark { gpui::rgba(0x0e0e11fa) } else { gpui::rgba(0xf4f4f7ee) })
                     .p_4()
                     .flex()
                     .flex_col()
                     .items_center()
                     .justify_center()
                     .gap_3()
-                    .child(icon(item.icon_name, 52.).text_color(theme::accent()))
+                    .child(icon(item.icon_name, 56.).text_color(theme.accent))
                     .child(
                         div()
                             .text_size(px(15.))
                             .font_weight(gpui::FontWeight::BOLD)
-                            .text_color(gpui::white())
+                            .text_color(theme.text_primary)
                             .child(item.title.clone()),
                     )
                     .when_some(item.subtitle.clone(), |d, sub| {
                         d.child(
                             div()
                                 .text_size(px(12.))
-                                .text_color(gpui::rgba(0xffffff70))
+                                .text_color(theme.text_muted)
                                 .text_center()
                                 .child(sub),
                         )
@@ -2273,26 +2281,26 @@ impl MainWindow {
                                 .px_2p5()
                                 .py_1()
                                 .rounded(px(4.))
-                                .bg(gpui::rgba(0xffffff0d))
+                                .bg(theme.button_fill)
                                 .border_1()
-                                .border_color(gpui::rgba(0xffffff15))
+                                .border_color(theme.button_border)
                                 .text_size(px(11.))
-                                .text_color(gpui::white())
+                                .text_color(theme.text_primary)
                                 .child(format!("Shortcut: {}", sc)),
                         )
                     })
             }
         } else {
             div()
-                .w(px(290.))
+                .w(px(310.))
                 .h_full()
-                .bg(gpui::rgba(0x0e0e11fa))
+                .bg(if theme.is_dark { gpui::rgba(0x0e0e11fa) } else { gpui::rgba(0xf4f4f7ee) })
                 .p_4()
                 .flex()
                 .items_center()
                 .justify_center()
                 .text_size(px(12.))
-                .text_color(gpui::rgba(0xffffff40))
+                .text_color(theme.text_faint)
                 .child("Select an item to preview")
         };
 
@@ -2300,7 +2308,7 @@ impl MainWindow {
             .id("command-palette-backdrop")
             .absolute()
             .inset_0()
-            .bg(gpui::rgba(0x000000a6))
+            .bg(if theme.is_dark { gpui::rgba(0x000000a6) } else { gpui::rgba(0x00000045) })
             .flex()
             .items_start()
             .justify_center()
@@ -2314,11 +2322,12 @@ impl MainWindow {
             .child(
                 div()
                     .id("command-palette-card")
-                    .w(px(760.))
+                    .w(px(780.))
                     .max_h(px(480.))
-                    .bg(gpui::rgba(0x131316fc))
+                    .bg(theme.card)
                     .border_1()
-                    .border_color(gpui::rgba(0xffffff15))
+                    .border_color(theme.surface_border)
+                    .shadow(theme::floating_panel_shadows(theme))
                     .rounded(px(14.))
                     .flex()
                     .flex_col()
@@ -2340,14 +2349,14 @@ impl MainWindow {
                                     .flex()
                                     .items_center()
                                     .gap_3()
-                                    .child(icon("search", 16.).text_color(gpui::rgba(0xffffff60)))
+                                    .child(icon("search", 16.).text_color(theme.text_faint))
                                     .child(
                                         div()
                                             .text_size(px(14.))
                                             .text_color(if self.command_palette_query.is_empty() {
-                                                gpui::rgba(0xffffff50)
+                                                theme.text_faint
                                             } else {
-                                                gpui::rgba(0xffffffff)
+                                                theme.text_primary
                                             })
                                             .child(if self.command_palette_query.is_empty() {
                                                 "Type a command or search...".to_string()
@@ -2366,7 +2375,7 @@ impl MainWindow {
                             ),
                     )
                     // Divider
-                    .child(div().h(px(1.)).w_full().bg(gpui::rgba(0xffffff10)))
+                    .child(div().h(px(1.)).w_full().bg(theme.surface_border))
                     // Split Body: Left List + Right Preview
                     .child(
                         div()
@@ -2397,14 +2406,14 @@ impl MainWindow {
                                         div()
                                             .h(px(34.))
                                             .px_4()
-                                            .bg(gpui::rgba(0x101012fa))
+                                            .bg(if theme.is_dark { gpui::rgba(0x101012fa) } else { gpui::rgba(0xf0f0f4ee) })
                                             .border_t_1()
-                                            .border_color(gpui::rgba(0xffffff10))
+                                            .border_color(theme.surface_border)
                                             .flex()
                                             .items_center()
                                             .justify_between()
                                             .text_size(px(11.))
-                                            .text_color(gpui::rgba(0xffffff50))
+                                            .text_color(theme.text_faint)
                                             .child(
                                                 div()
                                                     .child(capitalized_user),
@@ -2423,7 +2432,7 @@ impl MainWindow {
                                                             .child(
                                                                 div()
                                                                     .text_size(px(12.))
-                                                                    .text_color(gpui::rgba(0xffffff80))
+                                                                    .text_color(theme.text_muted)
                                                                     .child("↵"),
                                                             ),
                                                     )
@@ -2438,19 +2447,19 @@ impl MainWindow {
                                                                     .px_1()
                                                                     .py_0p5()
                                                                     .rounded(px(3.))
-                                                                    .bg(gpui::rgba(0xffffff0d))
+                                                                    .bg(theme.button_fill)
                                                                     .border_1()
-                                                                    .border_color(gpui::rgba(0xffffff10))
+                                                                    .border_color(theme.button_border)
                                                                     .text_size(px(9.))
-                                                                    .text_color(gpui::rgba(0xffffff80))
+                                                                    .text_color(theme.text_muted)
                                                                     .child("Esc"),
                                                             ),
                                                     ),
-                                            ),
-                                    ),
+                                             ),
+                                     ),
                             )
                             // Vertical Divider
-                            .child(div().w(px(1.)).h_full().bg(gpui::rgba(0xffffff10)))
+                            .child(div().w(px(1.)).h_full().bg(theme.surface_border))
                             // Right Preview Pane
                             .child(preview_pane),
                     ),
@@ -3608,13 +3617,13 @@ impl Render for MainWindow {
                     ),
             )
             .when(self.show_filter_menu, |d| {
-                d.child(self.render_filter_popover(cx))
+                d.child(self.render_filter_popover(&theme, cx))
             })
             .when(self.show_settings_modal, |d| {
-                d.child(self.render_settings_modal(cx))
+                d.child(self.render_settings_modal(&theme, cx))
             })
             .when(self.show_command_palette, |d| {
-                d.child(self.render_command_palette(cx))
+                d.child(self.render_command_palette(&theme, cx))
             })
     }
 }
