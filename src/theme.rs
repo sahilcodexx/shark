@@ -401,6 +401,94 @@ pub enum ButtonLook {
     Disabled,
 }
 
+pub fn theme_chip(
+    id: impl Into<ElementId>,
+    selected: bool,
+    theme: &ThemeColors,
+) -> Stateful<Div> {
+    div()
+        .id(id)
+        .role(Role::Button)
+        .h(px(26.))
+        .px(px(11.))
+        .flex_shrink_0()
+        .rounded_full()
+        .flex()
+        .items_center()
+        .justify_center()
+        .gap_1()
+        .text_size(px(12.))
+        .font_weight(if selected { FontWeight::SEMIBOLD } else { FontWeight::NORMAL })
+        .cursor_pointer()
+        .map(|d| {
+            if selected {
+                d.bg(theme.accent)
+                    .text_color(gpui::white())
+                    .shadow(control_shadow(theme))
+                    .hover(|s| s.opacity(0.92))
+                    .active(|s| s.opacity(0.85))
+            } else if theme.is_dark {
+                d.bg(gpui::rgba(0xffffff10))
+                    .border_1()
+                    .border_color(gpui::rgba(0xffffff14))
+                    .text_color(theme.text_primary)
+                    .hover(|s| s.bg(gpui::rgba(0xffffff1e)).border_color(gpui::rgba(0xffffff26)))
+                    .active(|s| s.bg(gpui::rgba(0xffffff28)))
+            } else {
+                d.bg(gpui::rgba(0x00000008))
+                    .border_1()
+                    .border_color(gpui::rgba(0x0000000e))
+                    .text_color(theme.text_primary)
+                    .hover(|s| s.bg(gpui::rgba(0x00000012)).border_color(gpui::rgba(0x00000018)))
+                    .active(|s| s.bg(gpui::rgba(0x0000001a)))
+            }
+        })
+}
+
+pub fn macos_segmented_track(id: impl Into<ElementId>, theme: &ThemeColors) -> Stateful<Div> {
+    div()
+        .id(id)
+        .h(px(28.))
+        .w_full()
+        .p(px(2.))
+        .rounded_full()
+        .bg(if theme.is_dark { gpui::rgba(0xffffff0e) } else { gpui::rgba(0x00000008) })
+        .border_1()
+        .border_color(if theme.is_dark { gpui::rgba(0xffffff12) } else { gpui::rgba(0x0000000e) })
+        .flex()
+        .items_center()
+        .gap(px(2.))
+}
+
+pub fn macos_segmented_item(
+    id: impl Into<ElementId>,
+    selected: bool,
+    theme: &ThemeColors,
+) -> Stateful<Div> {
+    div()
+        .id(id)
+        .role(Role::Button)
+        .flex_1()
+        .h_full()
+        .rounded_full()
+        .flex()
+        .items_center()
+        .justify_center()
+        .text_size(px(11.5))
+        .font_weight(if selected { FontWeight::SEMIBOLD } else { FontWeight::NORMAL })
+        .cursor_pointer()
+        .map(|d| {
+            if selected {
+                d.bg(theme.accent)
+                    .text_color(gpui::white())
+                    .shadow(control_shadow(theme))
+            } else {
+                d.text_color(theme.text_muted)
+                    .hover(|s| s.bg(if theme.is_dark { gpui::rgba(0xffffff12) } else { gpui::rgba(0x0000000a) }).text_color(theme.text_primary))
+            }
+        })
+}
+
 pub fn theme_button(id: impl Into<ElementId>, look: ButtonLook, theme: &ThemeColors) -> Stateful<Div> {
     div()
         .id(id)
@@ -431,7 +519,7 @@ pub fn theme_button(id: impl Into<ElementId>, look: ButtonLook, theme: &ThemeCol
                 .active(|s| s.bg(theme.sidebar_selected)),
             ButtonLook::Primary => d
                 .bg(theme.accent)
-                .text_color(if theme.is_dark { gpui::black() } else { gpui::white() })
+                .text_color(gpui::white())
                 .shadow(control_shadow(theme))
                 .hover(|s| s.opacity(0.92))
                 .active(|s| s.opacity(0.85)),
