@@ -5,7 +5,10 @@ use crate::filesystem::operations::{open_in_terminal, open_path};
 use crate::filesystem::scanner::{scan_directory_async, ScanMessage};
 use crate::models::file_entry::FileEntry;
 use crate::navigation::history::NavigationHistory;
-use crate::theme::{self, button, theme_button, icon, icon_button, ButtonLook, RADIUS_CARD, RADIUS_ROW, RADIUS_THUMB, TITLE_BAR_HEIGHT};
+use crate::theme::{
+    self, button, icon, icon_button, macos_segmented_item, macos_segmented_track, theme_button, theme_chip,
+    ButtonLook, RADIUS_CARD, RADIUS_ROW, RADIUS_THUMB, TITLE_BAR_HEIGHT,
+};
 use crate::thumbnails::ThumbnailCache;
 use gpui::{
     actions, div, img, prelude::*, px, uniform_list, AnyElement, ClickEvent, Context, CursorStyle, Div, ElementId,
@@ -1397,10 +1400,10 @@ impl MainWindow {
                                     .flex()
                                     .items_center()
                                     .gap_2()
-                                    .child(icon("filter", 16.).text_color(theme.accent))
+                                    .child(icon("filter", 15.).text_color(theme.accent))
                                     .child(
                                         div()
-                                            .text_size(px(14.))
+                                            .text_size(px(13.5))
                                             .font_weight(gpui::FontWeight::BOLD)
                                             .text_color(theme.text_primary)
                                             .child("Filter & Sort"),
@@ -1414,6 +1417,9 @@ impl MainWindow {
                                     .when(is_any_filter_active, |d| {
                                         d.child(
                                             theme_button("popover-reset-filters", ButtonLook::Ghost, theme)
+                                                .h(px(24.))
+                                                .px(px(8.))
+                                                .text_size(px(11.))
                                                 .on_click(cx.listener(|this, _, _, cx| this.reset_filters(cx)))
                                                 .child("Reset"),
                                         )
@@ -1435,32 +1441,30 @@ impl MainWindow {
                             .gap_1p5()
                             .child(
                                 div()
-                                    .text_size(px(11.))
+                                    .text_size(px(10.5))
                                     .font_weight(gpui::FontWeight::SEMIBOLD)
                                     .text_color(theme.text_faint)
                                     .child("SORT BY"),
                             )
                             .child(
-                                div()
-                                    .flex()
-                                    .gap_1p5()
+                                macos_segmented_track("sort-by-track", theme)
                                     .child(
-                                        theme_button("sort-name", if self.sort_by == SortBy::Name { ButtonLook::Primary } else { ButtonLook::Secondary }, theme)
+                                        macos_segmented_item("sort-name", self.sort_by == SortBy::Name, theme)
                                             .on_click(cx.listener(|this, _, _, cx| this.toggle_sort(SortBy::Name, cx)))
                                             .child("Name"),
                                     )
                                     .child(
-                                        theme_button("sort-mod", if self.sort_by == SortBy::Modified { ButtonLook::Primary } else { ButtonLook::Secondary }, theme)
+                                        macos_segmented_item("sort-mod", self.sort_by == SortBy::Modified, theme)
                                             .on_click(cx.listener(|this, _, _, cx| this.toggle_sort(SortBy::Modified, cx)))
                                             .child("Date"),
                                     )
                                     .child(
-                                        theme_button("sort-size", if self.sort_by == SortBy::Size { ButtonLook::Primary } else { ButtonLook::Secondary }, theme)
+                                        macos_segmented_item("sort-size", self.sort_by == SortBy::Size, theme)
                                             .on_click(cx.listener(|this, _, _, cx| this.toggle_sort(SortBy::Size, cx)))
                                             .child("Size"),
                                     )
                                     .child(
-                                        theme_button("sort-type", if self.sort_by == SortBy::Type { ButtonLook::Primary } else { ButtonLook::Secondary }, theme)
+                                        macos_segmented_item("sort-type", self.sort_by == SortBy::Type, theme)
                                             .on_click(cx.listener(|this, _, _, cx| this.toggle_sort(SortBy::Type, cx)))
                                             .child("Type"),
                                     ),
@@ -1473,12 +1477,12 @@ impl MainWindow {
                                     .pt_1()
                                     .child(
                                         div()
-                                            .text_size(px(12.))
+                                            .text_size(px(11.5))
                                             .text_color(theme.text_muted)
                                             .child("Direction:"),
                                     )
                                     .child(
-                                        theme_button("sort-direction", ButtonLook::Secondary, theme)
+                                        theme_chip("sort-direction", self.sort_reversed, theme)
                                             .on_click(cx.listener(|this, _, _, cx| {
                                                 this.sort_reversed = !this.sort_reversed;
                                                 this.sort_and_filter();
@@ -1498,7 +1502,7 @@ impl MainWindow {
                             .gap_1p5()
                             .child(
                                 div()
-                                    .text_size(px(11.))
+                                    .text_size(px(10.5))
                                     .font_weight(gpui::FontWeight::SEMIBOLD)
                                     .text_color(theme.text_faint)
                                     .child("FILTER BY TYPE"),
@@ -1509,37 +1513,37 @@ impl MainWindow {
                                     .flex_wrap()
                                     .gap_1p5()
                                     .child(
-                                        theme_button("f-type-all", if self.type_filter == TypeFilter::All { ButtonLook::Primary } else { ButtonLook::Secondary }, theme)
+                                        theme_chip("f-type-all", self.type_filter == TypeFilter::All, theme)
                                             .on_click(cx.listener(|this, _, _, cx| { this.type_filter = TypeFilter::All; this.sort_and_filter(); cx.notify(); }))
                                             .child("All"),
                                     )
                                     .child(
-                                        theme_button("f-type-folders", if self.type_filter == TypeFilter::Folders { ButtonLook::Primary } else { ButtonLook::Secondary }, theme)
+                                        theme_chip("f-type-folders", self.type_filter == TypeFilter::Folders, theme)
                                             .on_click(cx.listener(|this, _, _, cx| { this.type_filter = TypeFilter::Folders; this.sort_and_filter(); cx.notify(); }))
                                             .child("Folders"),
                                     )
                                     .child(
-                                        theme_button("f-type-docs", if self.type_filter == TypeFilter::Documents { ButtonLook::Primary } else { ButtonLook::Secondary }, theme)
+                                        theme_chip("f-type-docs", self.type_filter == TypeFilter::Documents, theme)
                                             .on_click(cx.listener(|this, _, _, cx| { this.type_filter = TypeFilter::Documents; this.sort_and_filter(); cx.notify(); }))
                                             .child("Docs"),
                                     )
                                     .child(
-                                        theme_button("f-type-images", if self.type_filter == TypeFilter::Images { ButtonLook::Primary } else { ButtonLook::Secondary }, theme)
+                                        theme_chip("f-type-images", self.type_filter == TypeFilter::Images, theme)
                                             .on_click(cx.listener(|this, _, _, cx| { this.type_filter = TypeFilter::Images; this.sort_and_filter(); cx.notify(); }))
                                             .child("Images"),
                                     )
                                     .child(
-                                        theme_button("f-type-media", if self.type_filter == TypeFilter::Media { ButtonLook::Primary } else { ButtonLook::Secondary }, theme)
+                                        theme_chip("f-type-media", self.type_filter == TypeFilter::Media, theme)
                                             .on_click(cx.listener(|this, _, _, cx| { this.type_filter = TypeFilter::Media; this.sort_and_filter(); cx.notify(); }))
                                             .child("Media"),
                                     )
                                     .child(
-                                        theme_button("f-type-code", if self.type_filter == TypeFilter::Code { ButtonLook::Primary } else { ButtonLook::Secondary }, theme)
+                                        theme_chip("f-type-code", self.type_filter == TypeFilter::Code, theme)
                                             .on_click(cx.listener(|this, _, _, cx| { this.type_filter = TypeFilter::Code; this.sort_and_filter(); cx.notify(); }))
                                             .child("Code"),
                                     )
                                     .child(
-                                        theme_button("f-type-archives", if self.type_filter == TypeFilter::Archives { ButtonLook::Primary } else { ButtonLook::Secondary }, theme)
+                                        theme_chip("f-type-archives", self.type_filter == TypeFilter::Archives, theme)
                                             .on_click(cx.listener(|this, _, _, cx| { this.type_filter = TypeFilter::Archives; this.sort_and_filter(); cx.notify(); }))
                                             .child("Archives"),
                                     ),
@@ -1555,7 +1559,7 @@ impl MainWindow {
                             .gap_1p5()
                             .child(
                                 div()
-                                    .text_size(px(11.))
+                                    .text_size(px(10.5))
                                     .font_weight(gpui::FontWeight::SEMIBOLD)
                                     .text_color(theme.text_faint)
                                     .child("DATE MODIFIED"),
@@ -1566,22 +1570,22 @@ impl MainWindow {
                                     .flex_wrap()
                                     .gap_1p5()
                                     .child(
-                                        theme_button("f-date-any", if self.date_filter == DateFilter::Any { ButtonLook::Primary } else { ButtonLook::Secondary }, theme)
+                                        theme_chip("f-date-any", self.date_filter == DateFilter::Any, theme)
                                             .on_click(cx.listener(|this, _, _, cx| { this.date_filter = DateFilter::Any; this.sort_and_filter(); cx.notify(); }))
                                             .child("Any time"),
                                     )
                                     .child(
-                                        theme_button("f-date-today", if self.date_filter == DateFilter::Today { ButtonLook::Primary } else { ButtonLook::Secondary }, theme)
+                                        theme_chip("f-date-today", self.date_filter == DateFilter::Today, theme)
                                             .on_click(cx.listener(|this, _, _, cx| { this.date_filter = DateFilter::Today; this.sort_and_filter(); cx.notify(); }))
                                             .child("Today"),
                                     )
                                     .child(
-                                        theme_button("f-date-7d", if self.date_filter == DateFilter::Last7Days { ButtonLook::Primary } else { ButtonLook::Secondary }, theme)
+                                        theme_chip("f-date-7d", self.date_filter == DateFilter::Last7Days, theme)
                                             .on_click(cx.listener(|this, _, _, cx| { this.date_filter = DateFilter::Last7Days; this.sort_and_filter(); cx.notify(); }))
                                             .child("Past 7 Days"),
                                     )
                                     .child(
-                                        theme_button("f-date-30d", if self.date_filter == DateFilter::Last30Days { ButtonLook::Primary } else { ButtonLook::Secondary }, theme)
+                                        theme_chip("f-date-30d", self.date_filter == DateFilter::Last30Days, theme)
                                             .on_click(cx.listener(|this, _, _, cx| { this.date_filter = DateFilter::Last30Days; this.sort_and_filter(); cx.notify(); }))
                                             .child("Past 30 Days"),
                                     ),
@@ -1597,7 +1601,7 @@ impl MainWindow {
                             .gap_1p5()
                             .child(
                                 div()
-                                    .text_size(px(11.))
+                                    .text_size(px(10.5))
                                     .font_weight(gpui::FontWeight::SEMIBOLD)
                                     .text_color(theme.text_faint)
                                     .child("FILE SIZE"),
@@ -1607,22 +1611,22 @@ impl MainWindow {
                                     .flex()
                                     .gap_1p5()
                                     .child(
-                                        theme_button("f-size-any", if self.size_filter == SizeFilter::Any { ButtonLook::Primary } else { ButtonLook::Secondary }, theme)
+                                        theme_chip("f-size-any", self.size_filter == SizeFilter::Any, theme)
                                             .on_click(cx.listener(|this, _, _, cx| { this.size_filter = SizeFilter::Any; this.sort_and_filter(); cx.notify(); }))
                                             .child("Any"),
                                     )
                                     .child(
-                                        theme_button("f-size-small", if self.size_filter == SizeFilter::Small { ButtonLook::Primary } else { ButtonLook::Secondary }, theme)
+                                        theme_chip("f-size-small", self.size_filter == SizeFilter::Small, theme)
                                             .on_click(cx.listener(|this, _, _, cx| { this.size_filter = SizeFilter::Small; this.sort_and_filter(); cx.notify(); }))
                                             .child("< 1 MB"),
                                     )
                                     .child(
-                                        theme_button("f-size-med", if self.size_filter == SizeFilter::Medium { ButtonLook::Primary } else { ButtonLook::Secondary }, theme)
+                                        theme_chip("f-size-med", self.size_filter == SizeFilter::Medium, theme)
                                             .on_click(cx.listener(|this, _, _, cx| { this.size_filter = SizeFilter::Medium; this.sort_and_filter(); cx.notify(); }))
                                             .child("1-100 MB"),
                                     )
                                     .child(
-                                        theme_button("f-size-large", if self.size_filter == SizeFilter::Large { ButtonLook::Primary } else { ButtonLook::Secondary }, theme)
+                                        theme_chip("f-size-large", self.size_filter == SizeFilter::Large, theme)
                                             .on_click(cx.listener(|this, _, _, cx| { this.size_filter = SizeFilter::Large; this.sort_and_filter(); cx.notify(); }))
                                             .child("> 100 MB"),
                                     ),
@@ -1642,6 +1646,8 @@ impl MainWindow {
                             .child(format!("Showing {} of {} items", filtered_count, total_count))
                             .child(
                                 theme_button("done-filter-popover", ButtonLook::Primary, theme)
+                                    .h(px(28.))
+                                    .px(px(14.))
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.show_filter_menu = false;
                                         cx.notify();
