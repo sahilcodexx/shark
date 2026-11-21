@@ -9,7 +9,7 @@ use crate::theme::{self, button, theme_button, icon, icon_button, ButtonLook, RA
 use crate::thumbnails::ThumbnailCache;
 use gpui::{
     actions, div, img, prelude::*, px, uniform_list, AnyElement, ClickEvent, Context, CursorStyle, Div, ElementId,
-    FocusHandle, Hsla, IntoElement, KeyDownEvent, MouseButton, Render, ResizeEdge, ScrollWheelEvent, SharedString,
+    FocusHandle, Hsla, IntoElement, KeyDownEvent, MouseButton, Render, ResizeEdge, Role, ScrollWheelEvent, SharedString,
     Styled, UniformListScrollHandle, Window,
 };
 use std::path::{Path, PathBuf};
@@ -668,7 +668,7 @@ impl MainWindow {
                                 .id("path-editing-box")
                                 .flex_1()
                                 .min_w(px(280.))
-                                .child(self.render_breadcrumb(cx))
+                                .child(self.render_breadcrumb(theme, cx))
                         } else {
                             div()
                                 .id("current-folder-title-pill")
@@ -805,37 +805,52 @@ impl MainWindow {
             )
     }
 
-    fn render_breadcrumb(&self, cx: &mut Context<Self>) -> Div {
+    fn render_breadcrumb(&self, theme: &theme::ThemeColors, cx: &mut Context<Self>) -> Div {
         if self.path_editing {
             return div()
                 .h(px(theme::BUTTON_HEIGHT))
                 .px_2p5()
-                .bg(theme::glass_button_fill())
-                .rounded(px(theme::RADIUS_ROW))
+                .bg(theme.search_fill)
+                .rounded_full()
                 .border_1()
-                .border_color(theme::accent().opacity(0.6))
+                .border_color(theme.accent)
+                .shadow(theme::control_shadow(theme))
                 .flex()
                 .items_center()
                 .gap_2()
-                .child(theme::icon("hard-drive", 14.).text_color(theme::accent()))
+                .child(theme::icon("hard-drive", 14.).text_color(theme.accent))
                 .child(
                     div()
                         .flex_1()
                         .text_size(px(theme::TEXT_SMALL))
-                        .text_color(theme::text_primary())
+                        .text_color(theme.text_primary)
                         .font_weight(gpui::FontWeight::MEDIUM)
                         .child(format!("{}|", self.path_input_text)),
                 )
                 .child(
-                    theme::glass_icon_button("path-commit-btn", "check-hi", false, true)
-                        .on_click(cx.listener(|this, _, _, cx| this.commit_path_input(cx))),
+                    div()
+                        .id("path-commit-btn")
+                        .role(Role::Button)
+                        .cursor_pointer()
+                        .p_1()
+                        .rounded_full()
+                        .hover(|s| s.bg(theme.button_hover))
+                        .on_click(cx.listener(|this, _, _, cx| this.commit_path_input(cx)))
+                        .child(theme::icon("check-hi", 13.).text_color(theme.accent)),
                 )
                 .child(
-                    theme::glass_icon_button("path-cancel-btn", "cancel-01", false, true)
+                    div()
+                        .id("path-cancel-btn")
+                        .role(Role::Button)
+                        .cursor_pointer()
+                        .p_1()
+                        .rounded_full()
+                        .hover(|s| s.bg(theme.button_hover))
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.path_editing = false;
                             cx.notify();
-                        })),
+                        }))
+                        .child(theme::icon("cancel-01", 13.).text_color(theme.text_muted)),
                 );
         }
 
