@@ -148,6 +148,7 @@ pub struct MainWindow {
     pub background_mode: String,
     pub blur_coordinator: Option<crate::platform::PlatformBlurCoordinator>,
     pub window_size: (i32, i32),
+    pub animated_search_bar: crate::ui::search_bar::SearchBarState,
     appearance_subscription: Option<gpui::Subscription>,
     bounds_subscription: Option<gpui::Subscription>,
 }
@@ -230,6 +231,7 @@ impl MainWindow {
             background_mode: cfg.background_mode.clone(),
             blur_coordinator,
             window_size: (cfg.window_width, cfg.window_height),
+            animated_search_bar: crate::ui::search_bar::SearchBarState::new(),
             appearance_subscription: None,
             bounds_subscription: None,
         };
@@ -704,6 +706,23 @@ impl MainWindow {
                         }
                     ),
             )
+            // Center: Animated Search Bar (React / Motion port)
+            .child(
+                crate::ui::search_bar::render_search_capsule(
+                    &self.animated_search_bar,
+                    theme,
+                    |this, cx| {
+                        this.animated_search_bar.toggle();
+                        cx.notify();
+                    },
+                    |this, cx| {
+                        this.animated_search_bar.query.clear();
+                        this.animated_search_bar.active_index = 0;
+                        cx.notify();
+                    },
+                    cx,
+                )
+            )
             // Right controls cluster: Joint Capsules + Search Bar (matching macOS Finder in Image 2)
             .child(
                 div()
@@ -879,10 +898,11 @@ impl MainWindow {
         div()
             .h(px(theme::BUTTON_HEIGHT))
             .px_2()
-            .bg(theme::glass_button_fill())
-            .rounded(px(theme::RADIUS_ROW))
+            .bg(theme.button_fill)
+            .rounded_full()
             .border_1()
-            .border_color(theme::glass_border())
+            .border_color(theme.button_border)
+            .shadow(theme::control_shadow(theme))
             .flex()
             .items_center()
             .justify_between()
@@ -902,10 +922,10 @@ impl MainWindow {
                             .id(ElementId::from(format!("crumb-{}", i)))
                             .px_2()
                             .py_0p5()
-                            .rounded(px(4.))
+                            .rounded_full()
                             .cursor_pointer()
                             .when(!is_last, |d| {
-                                d.hover(|s| s.bg(theme::hover_fill()))
+                                d.hover(|s| s.bg(theme.button_hover))
                             })
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.navigate_to(target.clone(), cx);
@@ -913,7 +933,7 @@ impl MainWindow {
                             .child(
                                 div()
                                     .text_size(px(theme::TEXT_SMALL))
-                                    .text_color(if is_last { theme::accent() } else { theme::text_muted() })
+                                    .text_color(if is_last { theme.accent } else { theme.text_muted })
                                     .font_weight(if is_last { gpui::FontWeight::SEMIBOLD } else { gpui::FontWeight::NORMAL })
                                     .child(name),
                             )
@@ -922,7 +942,7 @@ impl MainWindow {
                         let chevron = if !is_last {
                             Some(
                                 theme::icon("chevron-right", 10.)
-                                    .text_color(theme::text_faint())
+                                    .text_color(theme.text_faint)
                                     .into_any_element(),
                             )
                         } else {
@@ -933,13 +953,20 @@ impl MainWindow {
                     })),
             )
             .child(
-                theme::glass_icon_button("edit-path-btn", "pencil", false, true)
+                div()
+                    .id("edit-path-btn")
+                    .role(Role::Button)
+                    .cursor_pointer()
+                    .p_1()
+                    .rounded_full()
+                    .hover(|s| s.bg(theme.button_hover))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.path_editing = true;
                         this.search_active = false;
                         this.path_input_text = this.current_path.to_string_lossy().to_string();
                         cx.notify();
-                    })),
+                    }))
+                    .child(theme::icon("pencil", 13.).text_color(theme.text_muted)),
             )
     }
 
@@ -948,7 +975,7 @@ impl MainWindow {
             .id("settings-modal-backdrop")
             .absolute()
             .inset_0()
-            .bg(if theme.is_dark { gpui::rgba(0x00000088) } else { gpui::rgba(0x00000040) })
+            .bg(if theme.is_dark { gpui::rgba(0x00000030) } else { gpui::rgba(0x00000014) })
             .flex()
             .items_center()
             .justify_center()
@@ -960,18 +987,21 @@ impl MainWindow {
             .child(
                 div()
                     .id("settings-modal-content")
+                    .relative()
                     .w(px(500.))
-                    .bg(theme.card)
+                    .bg(if theme.is_dark { gpui::rgba(0x161822d0) } else { gpui::rgba(0xf8fafed0) })
                     .border_1()
                     .border_color(theme.surface_border)
                     .shadow(theme::floating_panel_shadows(theme))
                     .rounded(px(RADIUS_CARD))
+                    .overflow_hidden()
                     .p_5()
                     .flex()
                     .flex_col()
                     .gap_3p5()
                     .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
                     .on_click(|_, _, cx| cx.stop_propagation())
+                    .child(theme::glass_specular_sheen(theme))
                     // Header
                     .child(
                         div()
@@ -1360,12 +1390,12 @@ impl MainWindow {
             .id("filter-popover-backdrop")
             .absolute()
             .inset_0()
-            .bg(gpui::rgba(0x00000000))
+            .bg(gpui::rgba(0x00000000)) // Pure transparent: no subtle black layer over the app
             .flex()
             .items_start()
             .justify_end()
             .pt(px(48.))
-            .pr(px(210.))
+            .pr(px(210.)) // Slid left to align under the action capsule & view switcher
             .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
             .on_click(cx.listener(|this, _, _, cx| {
                 this.show_filter_menu = false;
@@ -3623,6 +3653,14 @@ impl Render for MainWindow {
                 let key = ev.keystroke.key.as_str();
                 let modifiers = ev.keystroke.modifiers;
 
+                // 0a. Animated Search Bar Mode
+                if this.animated_search_bar.is_open {
+                    if this.animated_search_bar.handle_key(key) {
+                        cx.notify();
+                        return;
+                    }
+                }
+
                 // 0. Command Palette Mode
                 if this.show_command_palette {
                     let items = this.get_palette_items();
@@ -3824,6 +3862,27 @@ impl Render for MainWindow {
             })
             .when(self.show_command_palette, |d| {
                 d.child(self.render_command_palette(&theme, cx))
+            })
+            .when(self.animated_search_bar.is_open, |d| {
+                d.child(crate::ui::search_bar::render_search_popover(
+                    &self.animated_search_bar,
+                    &theme,
+                    |this, cx| {
+                        this.animated_search_bar.close();
+                        cx.notify();
+                    },
+                    |this, code, name, cx| {
+                        this.animated_search_bar.selected_code = code.to_string();
+                        this.animated_search_bar.query = name.to_string();
+                        this.animated_search_bar.close();
+                        cx.notify();
+                    },
+                    |this, idx, cx| {
+                        this.animated_search_bar.set_active_index(idx);
+                        cx.notify();
+                    },
+                    cx,
+                ))
             })
             // 8 edge / corner interactive resize handles for Wayland/X11
             .child(
