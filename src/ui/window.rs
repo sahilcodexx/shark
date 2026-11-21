@@ -1350,16 +1350,19 @@ impl MainWindow {
         let total_count = self.entries.len();
         let filtered_count = self.filtered_indices.len();
 
+        let popover_card_bg = theme.card;
+        let popover_border = theme.surface_border;
+
         div()
             .id("filter-popover-backdrop")
             .absolute()
             .inset_0()
-            .bg(if theme.is_dark { gpui::rgba(0x00000077) } else { gpui::rgba(0x00000030) })
+            .bg(gpui::rgba(0x00000000))
             .flex()
             .items_start()
             .justify_end()
-            .pt(px(46.))
-            .pr(px(16.))
+            .pt(px(48.))
+            .pr(px(210.))
             .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
             .on_click(cx.listener(|this, _, _, cx| {
                 this.show_filter_menu = false;
@@ -1368,18 +1371,21 @@ impl MainWindow {
             .child(
                 div()
                     .id("filter-popover-card")
-                    .w(px(350.))
-                    .bg(theme.card)
+                    .relative()
+                    .w(px(330.))
+                    .bg(popover_card_bg)
                     .border_1()
-                    .border_color(theme.surface_border)
-                    .shadow(theme::floating_panel_shadows(theme))
-                    .rounded(px(12.))
-                    .p_4()
+                    .border_color(popover_border)
+                    .shadow(theme::popover_shadows(theme))
+                    .rounded(px(14.))
+                    .overflow_hidden()
+                    .p_3p5()
                     .flex()
                     .flex_col()
                     .gap_3()
                     .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
                     .on_click(|_, _, cx| cx.stop_propagation())
+                    .child(theme::glass_specular_sheen(theme))
                     // Header
                     .child(
                         div()
