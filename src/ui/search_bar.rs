@@ -74,6 +74,10 @@ impl SpringPhysics {
 /// const springSnappy = { stiffness: 520, damping: 34, mass: 0.72 };
 pub const SPRING_SNAPPY: SpringPhysics = SpringPhysics::new(520.0, 34.0, 0.72);
 
+/// Silky fluid spring for popovers and layout morphing (matching macOS & Framer Motion):
+/// stiffness: 260, damping: 26, mass: 0.95
+pub const SPRING_SILKY: SpringPhysics = SpringPhysics::new(260.0, 26.0, 0.95);
+
 /// const springPill = { stiffness: 420, damping: 32, mass: 0.55 };
 pub const SPRING_PILL: SpringPhysics = SpringPhysics::new(420.0, 32.0, 0.55);
 
@@ -368,7 +372,7 @@ pub fn render_search_capsule<T: 'static>(
         // Dynamic spring width morphing: 280px closed -> 310px open
         .with_animation(
             ("capsule-width-spring", state.open_epoch),
-            SPRING_SNAPPY.into_animation(240),
+            SPRING_SILKY.into_animation(320),
             {
                 let is_open = state.is_open;
                 move |div, progress| {
@@ -524,10 +528,10 @@ pub fn render_search_popover<T: 'static>(
                 .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
                 .on_click(|_, _, cx| cx.stop_propagation())
                 .child(theme::glass_specular_sheen(theme))
-                // Card Entrance with SPRING_SNAPPY (stiffness: 520, damping: 34, mass: 0.72)
+                // Card Entrance with SPRING_SILKY (stiffness: 260, damping: 26, mass: 0.95)
                 .with_animation(
                     ("search-bar-card-spring", state.open_epoch),
-                    SPRING_SNAPPY.into_animation(280),
+                    SPRING_SILKY.into_animation(340),
                     |card_div, phase| {
                         let y_offset = (1.0 - phase) * -8.0;
                         card_div
@@ -550,7 +554,7 @@ pub fn render_search_popover<T: 'static>(
                         // Spring Height Morphing Animation
                         .with_animation(
                             ("search-bar-list-height-morph", state.filter_epoch),
-                            SPRING_SNAPPY.into_animation(240),
+                            SPRING_SILKY.into_animation(300),
                             move |viewport_div, progress| {
                                 let h = from_h + (to_h - from_h) * progress.clamp(0.0, 1.0);
                                 viewport_div.h(px(h))

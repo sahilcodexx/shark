@@ -7,7 +7,7 @@ use crate::models::file_entry::FileEntry;
 use crate::navigation::history::NavigationHistory;
 use crate::theme::{
     self, button, icon, icon_button, macos_segmented_item, macos_segmented_track, theme_button, theme_chip,
-    ButtonLook, RADIUS_CARD, RADIUS_ROW, RADIUS_THUMB, TITLE_BAR_HEIGHT,
+    ButtonLook, RADIUS_CARD, RADIUS_ROW, RADIUS_SIDEBAR, RADIUS_THUMB, TITLE_BAR_HEIGHT,
 };
 use crate::thumbnails::ThumbnailCache;
 use gpui::{
@@ -2579,7 +2579,7 @@ impl MainWindow {
             .child(theme::glass_specular_sheen(theme))
             .with_animation(
                 ("command-palette-width-spring", search_epoch),
-                crate::ui::search_bar::SPRING_SNAPPY.into_animation(260),
+                crate::ui::search_bar::SPRING_SILKY.into_animation(340),
                 move |card_div, progress| {
                     let w = if search_epoch == 0 {
                         if has_query { 780.0 } else { 470.0 }
@@ -2725,7 +2725,7 @@ impl MainWindow {
                             .overflow_hidden()
                             .with_animation(
                                 ("palette-preview-fade", search_epoch),
-                                crate::ui::search_bar::SPRING_PILL.into_animation(260),
+                                crate::ui::search_bar::SPRING_SILKY.into_animation(300),
                                 move |fade_div, progress| {
                                     let opacity = if search_epoch == 0 {
                                         if has_query { 1.0 } else { 0.0 }
@@ -2850,8 +2850,10 @@ impl MainWindow {
             .flex_shrink_0()
             .relative()
             .bg(theme.sidebar)
-            .border_r_1()
-            .border_color(theme.sidebar_border)
+            .rounded(px(RADIUS_SIDEBAR))
+            .border_1()
+            .border_color(theme.surface_border)
+            .shadow(theme::floating_panel_shadows(theme))
             .overflow_hidden()
             .flex()
             .flex_col()
@@ -3895,6 +3897,8 @@ impl Render for MainWindow {
                     .size_full()
                     .flex()
                     .flex_row()
+                    .p_2()
+                    .gap_3()
                     .overflow_hidden()
                     .child(sidebar)
                     .child(
