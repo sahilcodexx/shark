@@ -11,8 +11,8 @@ use crate::theme::{
 };
 use crate::thumbnails::ThumbnailCache;
 use gpui::{
-    actions, div, img, prelude::*, px, uniform_list, AnyElement, ClickEvent, Context, CursorStyle, Div, ElementId,
-    FocusHandle, Hsla, IntoElement, KeyDownEvent, MouseButton, Render, ResizeEdge, Role, ScrollWheelEvent, SharedString,
+    actions, div, img, prelude::*, px, uniform_list, AnimationExt, AnyElement, ClickEvent, Context, CursorStyle, Div, ElementId,
+    FocusHandle, Hsla, IntoElement, KeyDownEvent, MouseButton, MouseMoveEvent, Render, ResizeEdge, Role, ScrollWheelEvent, SharedString,
     Styled, UniformListScrollHandle, Window,
 };
 use std::path::{Path, PathBuf};
@@ -139,6 +139,8 @@ pub struct MainWindow {
     pub show_command_palette: bool,
     pub command_palette_query: String,
     pub command_palette_selected: usize,
+    pub command_palette_has_query: bool,
+    pub command_palette_search_epoch: usize,
     pub search_active: bool,
     pub path_editing: bool,
     pub path_input_text: String,
@@ -222,6 +224,8 @@ impl MainWindow {
             show_command_palette: false,
             command_palette_query: String::new(),
             command_palette_selected: 0,
+            command_palette_has_query: false,
+            command_palette_search_epoch: 0,
             search_active: false,
             path_editing: false,
             path_input_text: String::new(),
@@ -780,10 +784,7 @@ impl MainWindow {
                                     theme,
                                 )
                                 .on_click(cx.listener(|this, _, _, cx| {
-                                    this.show_command_palette = true;
-                                    this.command_palette_query.clear();
-                                    this.command_palette_selected = 0;
-                                    cx.notify();
+                                    this.open_command_palette(None, cx);
                                 })),
                             ),
                     )
@@ -808,10 +809,7 @@ impl MainWindow {
                             .hover(|s| s.bg(theme.button_hover))
                             .active(|s| s.bg(theme.sidebar_selected))
                             .on_click(cx.listener(|this, _, _, cx| {
-                                this.show_command_palette = true;
-                                this.command_palette_query.clear();
-                                this.command_palette_selected = 0;
-                                cx.notify();
+                                this.open_command_palette(None, cx);
                             }))
                             .child(theme::icon("search", 13.).text_color(theme.text_muted))
                             .child(
@@ -2117,8 +2115,38 @@ impl MainWindow {
         items
     }
 
-    pub fn execute_palette_action(&mut self, action: PaletteAction, cx: &mut Context<Self>) {
+    pub fn open_command_palette(&mut self, initial_query: Option<&str>, cx: &mut Context<Self>) {
+        self.show_command_palette = true;
+        let q = initial_query.unwrap_or("").to_string();
+        self.command_palette_query = q;
+        self.command_palette_selected = 0;
+        self.command_palette_has_query = !self.command_palette_query.is_empty();
+        self.command_palette_search_epoch = 0;
+        cx.notify();
+    }
+
+    pub fn close_command_palette(&mut self, cx: &mut Context<Self>) {
         self.show_command_palette = false;
+        self.command_palette_query.clear();
+        self.command_palette_has_query = false;
+        self.command_palette_search_epoch = 0;
+        cx.notify();
+    }
+
+    pub fn update_command_palette_query(&mut self, new_query: String, cx: &mut Context<Self>) {
+        let had_query = self.command_palette_has_query;
+        self.command_palette_query = new_query;
+        self.command_palette_selected = 0;
+        let has_query = !self.command_palette_query.is_empty();
+        if has_query != had_query {
+            self.command_palette_has_query = has_query;
+            self.command_palette_search_epoch = self.command_palette_search_epoch.wrapping_add(1);
+        }
+        cx.notify();
+    }
+
+    pub fn execute_palette_action(&mut self, action: PaletteAction, cx: &mut Context<Self>) {
+        self.close_command_palette(cx);
         match action {
             PaletteAction::Navigate(path) => {
                 self.navigate_to(path, cx);
@@ -2238,6 +2266,12 @@ impl MainWindow {
                 .when(!is_selected, |d| {
                     d.hover(|s| s.bg(theme.sidebar_hover))
                 })
+                .on_mouse_move(cx.listener(move |this, _ev: &MouseMoveEvent, _, cx| {
+                    if this.command_palette_selected != idx {
+                        this.command_palette_selected = idx;
+                        cx.notify();
+                    }
+                }))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.execute_palette_action(action.clone(), cx);
                 }))
@@ -2525,6 +2559,187 @@ impl MainWindow {
                 .child("Select an item to preview")
         };
 
+        let has_query = self.command_palette_has_query;
+        let search_epoch = self.command_palette_search_epoch;
+
+        let card = div()
+            .id("command-palette-card")
+            .relative()
+            .h(px(520.))
+            .bg(if theme.is_dark { gpui::rgba(0x141824b0) } else { gpui::rgba(0xf6f8fcad) })
+            .border_1()
+            .border_color(if theme.is_dark { gpui::rgba(0xffffff1c) } else { gpui::rgba(0x00000014) })
+            .shadow(theme::floating_panel_shadows(theme))
+            .rounded(px(14.))
+            .flex()
+            .flex_col()
+            .overflow_hidden()
+            .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
+            .on_click(|_, _, cx| cx.stop_propagation())
+            .child(theme::glass_specular_sheen(theme))
+            .with_animation(
+                ("command-palette-width-spring", search_epoch),
+                crate::ui::search_bar::SPRING_SNAPPY.into_animation(260),
+                move |card_div, progress| {
+                    let w = if search_epoch == 0 {
+                        if has_query { 780.0 } else { 470.0 }
+                    } else if has_query {
+                        470.0 + (780.0 - 470.0) * progress
+                    } else {
+                        780.0 - (780.0 - 470.0) * progress
+                    };
+                    card_div.w(px(w.max(460.0).min(800.0)))
+                },
+            );
+
+        let card = card
+            // Header Input Row
+            .child(
+                div()
+                    .h(px(48.))
+                    .px_4()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_3()
+                    .child(
+                        div()
+                            .flex_1()
+                            .flex()
+                            .items_center()
+                            .gap_3()
+                            .child(icon("search", 16.).text_color(theme.text_faint))
+                            .child(
+                                div()
+                                    .text_size(px(14.))
+                                    .text_color(if self.command_palette_query.is_empty() {
+                                        theme.text_faint
+                                    } else {
+                                        theme.text_primary
+                                    })
+                                    .child(if self.command_palette_query.is_empty() {
+                                        "Type a command or search...".to_string()
+                                    } else {
+                                        format!("{}|", self.command_palette_query)
+                                    }),
+                            ),
+                    )
+                    .child(
+                        icon_button("close-palette", "cancel-01", false, true)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.close_command_palette(cx);
+                            })),
+                    ),
+            )
+            // Divider
+            .child(div().h(px(1.)).w_full().bg(theme.surface_border))
+            // Split Body: Left List + Right Preview
+            .child(
+                div()
+                    .flex_1()
+                    .flex()
+                    .overflow_hidden()
+                    // Left list & footer (pinned at 468px)
+                    .child(
+                        div()
+                            .w(px(468.))
+                            .flex_shrink_0()
+                            .h_full()
+                            .flex()
+                            .flex_col()
+                            .child(
+                                div()
+                                    .id("palette-items-list")
+                                    .flex_1()
+                                    .overflow_y_scroll()
+                                    .p_2()
+                                    .flex()
+                                    .flex_col()
+                                    .gap_0p5()
+                                    .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
+                                    .children(rendered_items),
+                            )
+                            // Footer
+                            .child(
+                                div()
+                                    .h(px(34.))
+                                    .px_4()
+                                    .bg(if theme.is_dark { gpui::rgba(0x0000001c) } else { gpui::rgba(0x00000008) })
+                                    .border_t_1()
+                                    .border_color(theme.surface_border)
+                                    .flex()
+                                    .items_center()
+                                    .justify_between()
+                                    .text_size(px(11.))
+                                    .text_color(theme.text_faint)
+                                    .child(
+                                        div()
+                                            .child(capitalized_user),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .items_center()
+                                            .gap_4()
+                                            .child(
+                                                div()
+                                                    .flex()
+                                                    .items_center()
+                                                    .gap_1p5()
+                                                    .child(action_verb)
+                                                    .child(
+                                                        div()
+                                                            .text_size(px(12.))
+                                                            .text_color(theme.text_muted)
+                                                            .child("↵"),
+                                                    ),
+                                            )
+                                            .child(
+                                                div()
+                                                    .flex()
+                                                    .items_center()
+                                                    .gap_1p5()
+                                                    .child("Exit")
+                                                    .child(
+                                                        div()
+                                                            .px_1()
+                                                            .py_0p5()
+                                                            .rounded(px(3.))
+                                                            .bg(theme.button_fill)
+                                                            .border_1()
+                                                            .border_color(theme.button_border)
+                                                            .text_size(px(9.))
+                                                            .text_color(theme.text_muted)
+                                                            .child("Esc"),
+                                                    ),
+                                            ),
+                                    ),
+                             ),
+                    )
+                    // Right Preview Pane with Spring Fade & Reveal
+                    .child(
+                        div()
+                            .w(px(310.))
+                            .flex_shrink_0()
+                            .h_full()
+                            .overflow_hidden()
+                            .with_animation(
+                                ("palette-preview-fade", search_epoch),
+                                crate::ui::search_bar::SPRING_PILL.into_animation(260),
+                                move |fade_div, progress| {
+                                    let opacity = if search_epoch == 0 {
+                                        if has_query { 1.0 } else { 0.0 }
+                                    } else {
+                                        let p = progress.clamp(0.0, 1.0);
+                                        if has_query { p } else { 1.0 - p }
+                                    };
+                                    fade_div.opacity(opacity)
+                                },
+                            )
+                            .child(preview_pane),
+                    ),
+            );
+
         div()
             .id("command-palette-backdrop")
             .absolute()
@@ -2535,157 +2750,9 @@ impl MainWindow {
             .justify_center()
             .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
             .on_click(cx.listener(|this, _, _, cx| {
-                this.show_command_palette = false;
-                this.command_palette_query.clear();
-                cx.notify();
+                this.close_command_palette(cx);
             }))
-            .child(
-                div()
-                    .id("command-palette-card")
-                    .relative()
-                    .w(px(780.))
-                    .h(px(520.))
-                    .bg(if theme.is_dark { gpui::rgba(0x141824b0) } else { gpui::rgba(0xf6f8fcad) })
-                    .border_1()
-                    .border_color(if theme.is_dark { gpui::rgba(0xffffff1c) } else { gpui::rgba(0x00000014) })
-                    .shadow(theme::floating_panel_shadows(theme))
-                    .rounded(px(14.))
-                    .flex()
-                    .flex_col()
-                    .overflow_hidden()
-                    .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
-                    .on_click(|_, _, cx| cx.stop_propagation())
-                    .child(theme::glass_specular_sheen(theme))
-                    // Header Input Row
-                    .child(
-                        div()
-                            .h(px(48.))
-                            .px_4()
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .gap_3()
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .flex()
-                                    .items_center()
-                                    .gap_3()
-                                    .child(icon("search", 16.).text_color(theme.text_faint))
-                                    .child(
-                                        div()
-                                            .text_size(px(14.))
-                                            .text_color(if self.command_palette_query.is_empty() {
-                                                theme.text_faint
-                                            } else {
-                                                theme.text_primary
-                                            })
-                                            .child(if self.command_palette_query.is_empty() {
-                                                "Type a command or search...".to_string()
-                                            } else {
-                                                format!("{}|", self.command_palette_query)
-                                            }),
-                                    ),
-                            )
-                            .child(
-                                icon_button("close-palette", "cancel-01", false, true)
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.show_command_palette = false;
-                                        this.command_palette_query.clear();
-                                        cx.notify();
-                                    })),
-                            ),
-                    )
-                    // Divider
-                    .child(div().h(px(1.)).w_full().bg(theme.surface_border))
-                    // Split Body: Left List + Right Preview
-                    .child(
-                        div()
-                            .flex_1()
-                            .flex()
-                            .overflow_hidden()
-                            // Left list & footer
-                            .child(
-                                div()
-                                    .w(px(469.))
-                                    .h_full()
-                                    .flex()
-                                    .flex_col()
-                                    .child(
-                                        div()
-                                            .id("palette-items-list")
-                                            .flex_1()
-                                            .overflow_y_scroll()
-                                            .p_2()
-                                            .flex()
-                                            .flex_col()
-                                            .gap_0p5()
-                                            .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
-                                            .children(rendered_items),
-                                    )
-                                    // Footer
-                                    .child(
-                                        div()
-                                            .h(px(34.))
-                                            .px_4()
-                                            .bg(if theme.is_dark { gpui::rgba(0x0000001c) } else { gpui::rgba(0x00000008) })
-                                            .border_t_1()
-                                            .border_color(theme.surface_border)
-                                            .flex()
-                                            .items_center()
-                                            .justify_between()
-                                            .text_size(px(11.))
-                                            .text_color(theme.text_faint)
-                                            .child(
-                                                div()
-                                                    .child(capitalized_user),
-                                            )
-                                            .child(
-                                                div()
-                                                    .flex()
-                                                    .items_center()
-                                                    .gap_4()
-                                                    .child(
-                                                        div()
-                                                            .flex()
-                                                            .items_center()
-                                                            .gap_1p5()
-                                                            .child(action_verb)
-                                                            .child(
-                                                                div()
-                                                                    .text_size(px(12.))
-                                                                    .text_color(theme.text_muted)
-                                                                    .child("↵"),
-                                                            ),
-                                                    )
-                                                    .child(
-                                                        div()
-                                                            .flex()
-                                                            .items_center()
-                                                            .gap_1p5()
-                                                            .child("Exit")
-                                                            .child(
-                                                                div()
-                                                                    .px_1()
-                                                                    .py_0p5()
-                                                                    .rounded(px(3.))
-                                                                    .bg(theme.button_fill)
-                                                                    .border_1()
-                                                                    .border_color(theme.button_border)
-                                                                    .text_size(px(9.))
-                                                                    .text_color(theme.text_muted)
-                                                                    .child("Esc"),
-                                                            ),
-                                                    ),
-                                             ),
-                                     ),
-                            )
-                            // Vertical Divider
-                            .child(div().w(px(1.)).h_full().bg(theme.surface_border))
-                            // Right Preview Pane
-                            .child(preview_pane),
-                    ),
-            )
+            .child(card)
             .into_any_element()
     }
 
@@ -3666,9 +3733,7 @@ impl Render for MainWindow {
                     let items = this.get_palette_items();
                     match key {
                         "escape" => {
-                            this.show_command_palette = false;
-                            this.command_palette_query.clear();
-                            cx.notify();
+                            this.close_command_palette(cx);
                         }
                         "enter" => {
                             if !items.is_empty() {
@@ -3696,9 +3761,9 @@ impl Render for MainWindow {
                             }
                         }
                         "backspace" => {
-                            this.command_palette_query.pop();
-                            this.command_palette_selected = 0;
-                            cx.notify();
+                            let mut q = this.command_palette_query.clone();
+                            q.pop();
+                            this.update_command_palette_query(q, cx);
                         }
                         _ => {
                             if modifiers.control {
@@ -3713,14 +3778,13 @@ impl Render for MainWindow {
                                     _ => {}
                                 }
                             } else if !modifiers.platform && !modifiers.alt {
+                                let mut q = this.command_palette_query.clone();
                                 if let Some(ch) = &ev.keystroke.key_char {
-                                    this.command_palette_query.push_str(ch);
-                                    this.command_palette_selected = 0;
-                                    cx.notify();
+                                    q.push_str(ch);
+                                    this.update_command_palette_query(q, cx);
                                 } else if key.chars().count() == 1 {
-                                    this.command_palette_query.push_str(key);
-                                    this.command_palette_selected = 0;
-                                    cx.notify();
+                                    q.push_str(key);
+                                    this.update_command_palette_query(q, cx);
                                 }
                             }
                         }
@@ -3730,10 +3794,7 @@ impl Render for MainWindow {
 
                 // Global Shortcuts
                 if modifiers.control && (key == "k" || key == "p" || key == "f") || (key == "/" && !this.path_editing) {
-                    this.show_command_palette = true;
-                    this.command_palette_query.clear();
-                    this.command_palette_selected = 0;
-                    cx.notify();
+                    this.open_command_palette(None, cx);
                     return;
                 }
                 if modifiers.control && key == "l" {
@@ -3810,7 +3871,7 @@ impl Render for MainWindow {
                     "escape" => {
                         this.selected_index = None;
                         this.show_settings_modal = false;
-                        this.show_command_palette = false;
+                        this.close_command_palette(cx);
                         this.search_query.clear();
                         this.sort_and_filter();
                         cx.notify();
@@ -3820,16 +3881,10 @@ impl Render for MainWindow {
                         if !modifiers.control && !modifiers.platform && !modifiers.alt {
                             if let Some(ch) = &ev.keystroke.key_char {
                                 if !ch.trim().is_empty() {
-                                    this.show_command_palette = true;
-                                    this.command_palette_query.push_str(ch);
-                                    this.command_palette_selected = 0;
-                                    cx.notify();
+                                    this.open_command_palette(Some(ch), cx);
                                 }
                             } else if key.chars().count() == 1 && !key.trim().is_empty() {
-                                this.show_command_palette = true;
-                                this.command_palette_query.push_str(key);
-                                this.command_palette_selected = 0;
-                                cx.notify();
+                                this.open_command_palette(Some(key), cx);
                             }
                         }
                     }
