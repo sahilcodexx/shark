@@ -223,6 +223,45 @@ pub fn control_shadow(theme: &ThemeColors) -> Vec<BoxShadow> {
         .spread_radius(px(0.))]
 }
 
+/// Rich macOS popover drop shadow with ambient depth and sharp contact layer.
+pub fn popover_shadows(theme: &ThemeColors) -> Vec<BoxShadow> {
+    if theme.is_dark {
+        vec![
+            BoxShadow::new(px(0.), px(2.), gpui::rgba(0x00000050).into())
+                .blur_radius(px(6.))
+                .spread_radius(px(0.)),
+            BoxShadow::new(px(0.), px(14.), gpui::rgba(0x00000075).into())
+                .blur_radius(px(36.))
+                .spread_radius(px(2.)),
+            BoxShadow::new(px(0.), px(28.), gpui::rgba(0x00000050).into())
+                .blur_radius(px(64.))
+                .spread_radius(px(0.)),
+        ]
+    } else {
+        vec![
+            BoxShadow::new(px(0.), px(2.), gpui::rgba(0x00000010).into())
+                .blur_radius(px(6.))
+                .spread_radius(px(0.)),
+            BoxShadow::new(px(0.), px(12.), gpui::rgba(0x00000022).into())
+                .blur_radius(px(32.))
+                .spread_radius(px(1.)),
+            BoxShadow::new(px(0.), px(24.), gpui::rgba(0x00000012).into())
+                .blur_radius(px(56.))
+                .spread_radius(px(0.)),
+        ]
+    }
+}
+
+pub fn glass_specular_sheen(theme: &ThemeColors) -> Div {
+    div()
+        .absolute()
+        .top_0()
+        .left_0()
+        .right_0()
+        .h(px(1.0))
+        .bg(if theme.is_dark { gpui::rgba(0xffffff24) } else { gpui::rgba(0xffffff75) })
+}
+
 // Fallback tokens for static calls
 pub fn shell_fill() -> Hsla {
     rgb(0x141418).into()
