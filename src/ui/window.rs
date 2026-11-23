@@ -873,6 +873,7 @@ impl MainWindow {
             .flex()
             .items_center()
             .justify_center()
+            .p_4()
             .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
             .on_click(cx.listener(|this, _, _, cx| {
                 this.show_settings_modal = false;
@@ -881,391 +882,598 @@ impl MainWindow {
             .child(
                 div()
                     .id("settings-modal-content")
-                    .relative()
-                    .w(px(500.))
-                    .bg(if theme.is_dark { gpui::rgba(0x161822d0) } else { gpui::rgba(0xf8fafed0) })
+                    .w(px(560.))
+                    .max_w_full()
+                    .max_h_full()
+                    .bg(if theme.is_dark {
+                        gpui::rgb(0x202126)
+                    } else {
+                        gpui::rgb(0xf5f5f7)
+                    })
                     .border_1()
                     .border_color(theme.surface_border)
+                    .rounded(px(14.))
                     .shadow(theme::floating_panel_shadows(theme))
-                    .rounded(px(RADIUS_CARD))
-                    .overflow_hidden()
-                    .p_5()
                     .flex()
                     .flex_col()
-                    .gap_3p5()
-                    .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
+                    .overflow_hidden()
                     .on_click(|_, _, cx| cx.stop_propagation())
-                    .child(theme::glass_specular_sheen(theme))
-                    // Header
                     .child(
                         div()
+                            .h(px(60.))
+                            .flex_shrink_0()
+                            .px_5()
                             .flex()
                             .items_center()
                             .justify_between()
                             .child(
                                 div()
-                                    .flex()
-                                    .items_center()
-                                    .gap_2()
-                                    .child(icon("settings", 18.).text_color(theme.accent))
-                                    .child(
-                                        div()
-                                            .text_size(px(theme::TEXT_HEADER))
-                                            .font_weight(gpui::FontWeight::BOLD)
-                                            .text_color(theme.text_primary)
-                                            .child("Settings & Preferences"),
-                                    ),
+                                    .text_size(px(18.))
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .text_color(theme.text_primary)
+                                    .child("Settings"),
                             )
                             .child(
-                                icon_button("close-settings", "cancel-01", false, true)
-                                    .on_click(cx.listener(|this, _, _, cx| {
+                                icon_button("close-settings", "cancel-01", false, true).on_click(
+                                    cx.listener(|this, _, _, cx| {
                                         this.show_settings_modal = false;
                                         cx.notify();
-                                    })),
+                                    }),
+                                ),
                             ),
                     )
-                    // Section 1: View & Layout
                     .child(
                         div()
-                            .text_size(px(11.))
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .text_color(theme.accent)
-                            .child("VIEW & LAYOUT"),
-                    )
-                    // Window Material (Frosted Glass with Hardware Blur / Solid)
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .py_1p5()
-                            .border_b_1()
-                            .border_color(theme.surface_border)
+                            .id("settings-scroll")
+                            .overflow_y_scroll()
+                            .px_5()
+                            .pb_5()
                             .child(
                                 div()
-                                    .flex()
-                                    .flex_col()
-                                    .child(
-                                        div()
-                                            .text_size(px(theme::TEXT_BODY))
-                                            .font_weight(gpui::FontWeight::MEDIUM)
-                                            .text_color(theme.text_primary)
-                                            .child("Frosted Glass & Blur"),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_size(px(theme::TEXT_CAPTION))
-                                            .text_color(theme.text_faint)
-                                            .child("Hardware Wayland blur (Niri ext-background-effect-v1)"),
-                                    ),
+                                    .text_size(px(12.))
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .text_color(theme.text_muted)
+                                    .mt_4()
+                                    .mb_2()
+                                    .child("Appearance"),
                             )
                             .child(
                                 div()
-                                    .flex()
-                                    .gap_1p5()
-                                    .child(
-                                        theme_button(
-                                            "bg-frosted",
-                                            if self.background_mode != "solid" { ButtonLook::Primary } else { ButtonLook::Secondary },
-                                            theme,
+                                    .rounded(px(10.))
+                                    .bg(theme.card)
+                                    .border_1()
+                                    .border_color(theme.surface_border)
+                                    .overflow_hidden()
+                                    .children(vec![
+                                        div()
+                                            .min_h(px(64.))
+                                            .px_4()
+                                            .py_3()
+                                            .flex()
+                                            .items_center()
+                                            .justify_between()
+                                            .gap_4()
+                                            .child(
+                                                div()
+                                                    .flex_1()
+                                                    .min_w_0()
+                                                    .flex()
+                                                    .flex_col()
+                                                    .gap_1()
+                                                    .child(
+                                                        div()
+                                                            .text_size(px(13.))
+                                                            .font_weight(gpui::FontWeight::MEDIUM)
+                                                            .text_color(theme.text_primary)
+                                                            .child("Window material"),
+                                                    )
+                                                    .child(
+                                                        div()
+                                                            .text_size(px(11.))
+                                                            .text_color(theme.text_muted)
+                                                            .child("Choose the window background"),
+                                                    ),
+                                            )
+                                            .child(
+                                                macos_segmented_track(
+                                                    "settings-bg-frosted-track",
+                                                    theme,
+                                                )
+                                                .w(px(180.))
+                                                .h(px(30.))
+                                                .rounded(px(7.))
+                                                .flex_shrink_0()
+                                                .child(
+                                                    macos_segmented_item(
+                                                        "bg-frosted",
+                                                        self.background_mode != "solid",
+                                                        theme,
+                                                    )
+                                                    .rounded(px(5.))
+                                                    .on_click(cx.listener(|this, _, _, cx| {
+                                                        this.background_mode =
+                                                            "frosted".to_string();
+                                                        if let Some(coord) =
+                                                            &mut this.blur_coordinator
+                                                        {
+                                                            coord.set_enabled(true);
+                                                        }
+                                                        this.save_config();
+                                                        cx.notify();
+                                                    }))
+                                                    .child("Frosted"),
+                                                )
+                                                .child(
+                                                    macos_segmented_item(
+                                                        "bg-solid",
+                                                        self.background_mode == "solid",
+                                                        theme,
+                                                    )
+                                                    .rounded(px(5.))
+                                                    .on_click(cx.listener(|this, _, _, cx| {
+                                                        this.background_mode = "solid".to_string();
+                                                        if let Some(coord) =
+                                                            &mut this.blur_coordinator
+                                                        {
+                                                            coord.set_enabled(false);
+                                                        }
+                                                        this.save_config();
+                                                        cx.notify();
+                                                    }))
+                                                    .child("Solid"),
+                                                ),
+                                            )
+                                            .into_any_element(),
+                                        div()
+                                            .min_h(px(64.))
+                                            .px_4()
+                                            .py_3()
+                                            .flex()
+                                            .items_center()
+                                            .justify_between()
+                                            .gap_4()
+                                            .child(
+                                                div()
+                                                    .flex_1()
+                                                    .min_w_0()
+                                                    .flex()
+                                                    .flex_col()
+                                                    .gap_1()
+                                                    .child(
+                                                        div()
+                                                            .text_size(px(13.))
+                                                            .font_weight(gpui::FontWeight::MEDIUM)
+                                                            .text_color(theme.text_primary)
+                                                            .child("Icon size"),
+                                                    )
+                                                    .child(
+                                                        div()
+                                                            .text_size(px(11.))
+                                                            .text_color(theme.text_muted)
+                                                            .child("Size of files in grid view"),
+                                                    ),
+                                            )
+                                            .child(
+                                                macos_segmented_track(
+                                                    "settings-zoom-sm-track",
+                                                    theme,
+                                                )
+                                                .w(px(180.))
+                                                .h(px(30.))
+                                                .rounded(px(7.))
+                                                .flex_shrink_0()
+                                                .child(
+                                                    macos_segmented_item(
+                                                        "zoom-sm",
+                                                        self.zoom <= 95.,
+                                                        theme,
+                                                    )
+                                                    .rounded(px(5.))
+                                                    .on_click(cx.listener(|this, _, _, cx| {
+                                                        this.zoom = 80.;
+                                                        cx.notify();
+                                                    }))
+                                                    .child("S"),
+                                                )
+                                                .child(
+                                                    macos_segmented_item(
+                                                        "zoom-med",
+                                                        self.zoom > 95. && self.zoom <= 140.,
+                                                        theme,
+                                                    )
+                                                    .rounded(px(5.))
+                                                    .on_click(cx.listener(|this, _, _, cx| {
+                                                        this.zoom = 120.;
+                                                        cx.notify();
+                                                    }))
+                                                    .child("M"),
+                                                )
+                                                .child(
+                                                    macos_segmented_item(
+                                                        "zoom-lg",
+                                                        self.zoom > 140. && self.zoom <= 200.,
+                                                        theme,
+                                                    )
+                                                    .rounded(px(5.))
+                                                    .on_click(cx.listener(|this, _, _, cx| {
+                                                        this.zoom = 180.;
+                                                        cx.notify();
+                                                    }))
+                                                    .child("L"),
+                                                )
+                                                .child(
+                                                    macos_segmented_item(
+                                                        "zoom-xl",
+                                                        self.zoom > 200.,
+                                                        theme,
+                                                    )
+                                                    .rounded(px(5.))
+                                                    .on_click(cx.listener(|this, _, _, cx| {
+                                                        this.zoom = 250.;
+                                                        cx.notify();
+                                                    }))
+                                                    .child("XL"),
+                                                ),
+                                            )
+                                            .into_any_element(),
+                                        div()
+                                            .min_h(px(64.))
+                                            .px_4()
+                                            .py_3()
+                                            .flex()
+                                            .items_center()
+                                            .justify_between()
+                                            .gap_4()
+                                            .child(
+                                                div()
+                                                    .flex_1()
+                                                    .min_w_0()
+                                                    .flex()
+                                                    .flex_col()
+                                                    .gap_1()
+                                                    .child(
+                                                        div()
+                                                            .text_size(px(13.))
+                                                            .font_weight(gpui::FontWeight::MEDIUM)
+                                                            .text_color(theme.text_primary)
+                                                            .child("Text size"),
+                                                    )
+                                                    .child(
+                                                        div()
+                                                            .text_size(px(11.))
+                                                            .text_color(theme.text_muted)
+                                                            .child("Interface font size"),
+                                                    ),
+                                            )
+                                            .child(
+                                                macos_segmented_track(
+                                                    "settings-font-sm-track",
+                                                    theme,
+                                                )
+                                                .w(px(180.))
+                                                .h(px(30.))
+                                                .rounded(px(7.))
+                                                .flex_shrink_0()
+                                                .child(
+                                                    macos_segmented_item(
+                                                        "font-sm",
+                                                        (self.font_size - 12.).abs() < 0.5,
+                                                        theme,
+                                                    )
+                                                    .rounded(px(5.))
+                                                    .on_click(cx.listener(|this, _, _, cx| {
+                                                        this.font_size = 12.;
+                                                        this.save_config();
+                                                        cx.notify();
+                                                    }))
+                                                    .child("12"),
+                                                )
+                                                .child(
+                                                    macos_segmented_item(
+                                                        "font-def",
+                                                        (self.font_size - 14.).abs() < 0.5,
+                                                        theme,
+                                                    )
+                                                    .rounded(px(5.))
+                                                    .on_click(cx.listener(|this, _, _, cx| {
+                                                        this.font_size = 14.;
+                                                        this.save_config();
+                                                        cx.notify();
+                                                    }))
+                                                    .child("14"),
+                                                )
+                                                .child(
+                                                    macos_segmented_item(
+                                                        "font-med",
+                                                        (self.font_size - 15.).abs() < 0.5,
+                                                        theme,
+                                                    )
+                                                    .rounded(px(5.))
+                                                    .on_click(cx.listener(|this, _, _, cx| {
+                                                        this.font_size = 15.;
+                                                        this.save_config();
+                                                        cx.notify();
+                                                    }))
+                                                    .child("15"),
+                                                )
+                                                .child(
+                                                    macos_segmented_item(
+                                                        "font-lg",
+                                                        (self.font_size - 16.).abs() < 0.5,
+                                                        theme,
+                                                    )
+                                                    .rounded(px(5.))
+                                                    .on_click(cx.listener(|this, _, _, cx| {
+                                                        this.font_size = 16.;
+                                                        this.save_config();
+                                                        cx.notify();
+                                                    }))
+                                                    .child("16"),
+                                                ),
+                                            )
+                                            .into_any_element(),
+                                    ]),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(12.))
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .text_color(theme.text_muted)
+                                    .mt_4()
+                                    .mb_2()
+                                    .child("Browsing"),
+                            )
+                            .child(
+                                div()
+                                    .rounded(px(10.))
+                                    .bg(theme.card)
+                                    .border_1()
+                                    .border_color(theme.surface_border)
+                                    .overflow_hidden()
+                                    .children(vec![
+                                        div()
+                                            .min_h(px(64.))
+                                            .px_4()
+                                            .py_3()
+                                            .flex()
+                                            .items_center()
+                                            .justify_between()
+                                            .gap_4()
+                                            .child(
+                                                div()
+                                                    .flex_1()
+                                                    .min_w_0()
+                                                    .flex()
+                                                    .flex_col()
+                                                    .gap_1()
+                                                    .child(
+                                                        div()
+                                                            .text_size(px(13.))
+                                                            .font_weight(gpui::FontWeight::MEDIUM)
+                                                            .text_color(theme.text_primary)
+                                                            .child("Hidden files"),
+                                                    )
+                                                    .child(
+                                                        div()
+                                                            .text_size(px(11.))
+                                                            .text_color(theme.text_muted)
+                                                            .child(
+                                                                "Show files beginning with a dot",
+                                                            ),
+                                                    ),
+                                            )
+                                            .child(
+                                                div()
+                                                    .id("toggle-hidden-btn")
+                                                    .aria_label("Show hidden files")
+                                                    .role(Role::Button)
+                                                    .cursor_pointer()
+                                                    .w(px(38.))
+                                                    .h(px(24.))
+                                                    .flex_shrink_0()
+                                                    .rounded_full()
+                                                    .p(px(3.))
+                                                    .bg(if self.show_hidden {
+                                                        theme.accent
+                                                    } else {
+                                                        theme.text_faint.opacity(0.35)
+                                                    })
+                                                    .flex()
+                                                    .items_center()
+                                                    .when(self.show_hidden, |d| d.justify_end())
+                                                    .hover(|d| d.opacity(0.85))
+                                                    .on_click(cx.listener(|this, _, _, cx| {
+                                                        this.show_hidden = !this.show_hidden;
+                                                        this.sort_and_filter();
+                                                        this.save_config();
+                                                        cx.notify();
+                                                    }))
+                                                    .child(
+                                                        div()
+                                                            .size(px(18.))
+                                                            .rounded_full()
+                                                            .bg(gpui::white()),
+                                                    ),
+                                            )
+                                            .into_any_element(),
+                                        div()
+                                            .min_h(px(64.))
+                                            .px_4()
+                                            .py_3()
+                                            .flex()
+                                            .items_center()
+                                            .justify_between()
+                                            .gap_4()
+                                            .child(
+                                                div()
+                                                    .flex_1()
+                                                    .min_w_0()
+                                                    .flex()
+                                                    .flex_col()
+                                                    .gap_1()
+                                                    .child(
+                                                        div()
+                                                            .text_size(px(13.))
+                                                            .font_weight(gpui::FontWeight::MEDIUM)
+                                                            .text_color(theme.text_primary)
+                                                            .child("Folders first"),
+                                                    )
+                                                    .child(
+                                                        div()
+                                                            .text_size(px(11.))
+                                                            .text_color(theme.text_muted)
+                                                            .child("Group folders above files"),
+                                                    ),
+                                            )
+                                            .child(
+                                                div()
+                                                    .id("toggle-folders-first-btn")
+                                                    .aria_label("Sort folders first")
+                                                    .role(Role::Button)
+                                                    .cursor_pointer()
+                                                    .w(px(38.))
+                                                    .h(px(24.))
+                                                    .flex_shrink_0()
+                                                    .rounded_full()
+                                                    .p(px(3.))
+                                                    .bg(if self.sort_folders_first {
+                                                        theme.accent
+                                                    } else {
+                                                        theme.text_faint.opacity(0.35)
+                                                    })
+                                                    .flex()
+                                                    .items_center()
+                                                    .when(self.sort_folders_first, |d| {
+                                                        d.justify_end()
+                                                    })
+                                                    .hover(|d| d.opacity(0.85))
+                                                    .on_click(cx.listener(|this, _, _, cx| {
+                                                        this.sort_folders_first =
+                                                            !this.sort_folders_first;
+                                                        this.sort_and_filter();
+                                                        this.save_config();
+                                                        cx.notify();
+                                                    }))
+                                                    .child(
+                                                        div()
+                                                            .size(px(18.))
+                                                            .rounded_full()
+                                                            .bg(gpui::white()),
+                                                    ),
+                                            )
+                                            .into_any_element(),
+                                        div()
+                                            .min_h(px(64.))
+                                            .px_4()
+                                            .py_3()
+                                            .flex()
+                                            .items_center()
+                                            .justify_between()
+                                            .gap_4()
+                                            .child(
+                                                div()
+                                                    .flex_1()
+                                                    .min_w_0()
+                                                    .flex()
+                                                    .flex_col()
+                                                    .gap_1()
+                                                    .child(
+                                                        div()
+                                                            .text_size(px(13.))
+                                                            .font_weight(gpui::FontWeight::MEDIUM)
+                                                            .text_color(theme.text_primary)
+                                                            .child("Thumbnail previews"),
+                                                    )
+                                                    .child(
+                                                        div()
+                                                            .text_size(px(11.))
+                                                            .text_color(theme.text_muted)
+                                                            .child("Preview images and videos"),
+                                                    ),
+                                            )
+                                            .child(
+                                                div()
+                                                    .id("toggle-thumbs-btn")
+                                                    .role(Role::Button)
+                                                    .cursor_pointer()
+                                                    .w(px(38.))
+                                                    .h(px(24.))
+                                                    .flex_shrink_0()
+                                                    .rounded_full()
+                                                    .p(px(3.))
+                                                    .bg(if self.enable_thumbnails {
+                                                        theme.accent
+                                                    } else {
+                                                        theme.text_faint.opacity(0.35)
+                                                    })
+                                                    .flex()
+                                                    .items_center()
+                                                    .when(self.enable_thumbnails, |d| {
+                                                        d.justify_end()
+                                                    })
+                                                    .hover(|d| d.opacity(0.85))
+                                                    .on_click(cx.listener(|this, _, _, cx| {
+                                                        this.enable_thumbnails =
+                                                            !this.enable_thumbnails;
+                                                        cx.notify();
+                                                    }))
+                                                    .child(
+                                                        div()
+                                                            .size(px(18.))
+                                                            .rounded_full()
+                                                            .bg(gpui::white()),
+                                                    ),
+                                            )
+                                            .into_any_element(),
+                                    ]),
+                            )
+                            .child(
+                                div().mt_4().child(
+                                    div()
+                                        .min_h(px(64.))
+                                        .px_4()
+                                        .py_3()
+                                        .flex()
+                                        .items_center()
+                                        .justify_between()
+                                        .gap_4()
+                                        .child(
+                                            div()
+                                                .flex_1()
+                                                .min_w_0()
+                                                .flex()
+                                                .flex_col()
+                                                .gap_1()
+                                                .child(
+                                                    div()
+                                                        .text_size(px(13.))
+                                                        .font_weight(gpui::FontWeight::MEDIUM)
+                                                        .text_color(theme.text_primary)
+                                                        .child("Terminal"),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .text_size(px(11.))
+                                                        .text_color(theme.text_muted)
+                                                        .child(
+                                                            "Open a shell in the current folder",
+                                                        ),
+                                                ),
                                         )
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.background_mode = "frosted".to_string();
-                                            if let Some(coord) = &mut this.blur_coordinator {
-                                                coord.set_enabled(true);
-                                            }
-                                            this.save_config();
-                                            cx.notify();
-                                        }))
-                                        .child("Frosted Blur"),
-                                    )
-                                    .child(
-                                        theme_button(
-                                            "bg-solid",
-                                            if self.background_mode == "solid" { ButtonLook::Primary } else { ButtonLook::Secondary },
-                                            theme,
-                                        )
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.background_mode = "solid".to_string();
-                                            if let Some(coord) = &mut this.blur_coordinator {
-                                                coord.set_enabled(false);
-                                            }
-                                            this.save_config();
-                                            cx.notify();
-                                        }))
-                                        .child("Solid"),
-                                    ),
-                            ),
-                    )
-                    // Option 1: Show Hidden Files
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .py_1p5()
-                            .border_b_1()
-                            .border_color(theme.surface_border)
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .child(
-                                        div()
-                                            .text_size(px(theme::TEXT_BODY))
-                                            .font_weight(gpui::FontWeight::MEDIUM)
-                                            .text_color(theme.text_primary)
-                                            .child("Show Hidden Files"),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_size(px(theme::TEXT_CAPTION))
-                                            .text_color(theme.text_faint)
-                                            .child("Display dotfiles and hidden folders (Ctrl+H)"),
-                                    ),
-                            )
-                            .child(
-                                theme_button(
-                                    "toggle-hidden-btn",
-                                    if self.show_hidden { ButtonLook::Primary } else { ButtonLook::Secondary },
-                                    theme,
-                                )
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.show_hidden = !this.show_hidden;
-                                    this.sort_and_filter();
-                                    this.save_config();
-                                    cx.notify();
-                                }))
-                                .child(if self.show_hidden { "ON" } else { "OFF" }),
-                            ),
-                    )
-                    // Option 2: Sort Folders First
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .py_1p5()
-                            .border_b_1()
-                            .border_color(theme.surface_border)
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .child(
-                                        div()
-                                            .text_size(px(theme::TEXT_BODY))
-                                            .font_weight(gpui::FontWeight::MEDIUM)
-                                            .text_color(theme.text_primary)
-                                            .child("Sort Folders First"),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_size(px(theme::TEXT_CAPTION))
-                                            .text_color(theme.text_faint)
-                                            .child("Keep directories grouped above files"),
-                                    ),
-                            )
-                            .child(
-                                theme_button(
-                                    "toggle-folders-first-btn",
-                                    if self.sort_folders_first { ButtonLook::Primary } else { ButtonLook::Secondary },
-                                    theme,
-                                )
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.sort_folders_first = !this.sort_folders_first;
-                                    this.sort_and_filter();
-                                    this.save_config();
-                                    cx.notify();
-                                }))
-                                .child(if self.sort_folders_first { "ON" } else { "OFF" }),
-                            ),
-                    )
-                    // Option 3: View Mode & Card Zoom
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .py_1p5()
-                            .border_b_1()
-                            .border_color(theme.surface_border)
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .child(
-                                        div()
-                                            .text_size(px(theme::TEXT_BODY))
-                                            .font_weight(gpui::FontWeight::MEDIUM)
-                                            .text_color(theme.text_primary)
-                                            .child("Grid Icon Size"),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_size(px(theme::TEXT_CAPTION))
-                                            .text_color(theme.text_faint)
-                                            .child("Zoom level for grid thumbnails"),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .flex()
-                                    .gap_1p5()
-                                    .child(
-                                        theme_button("zoom-sm", if self.zoom <= 95. { ButtonLook::Primary } else { ButtonLook::Secondary }, theme)
-                                            .on_click(cx.listener(|this, _, _, cx| { this.zoom = 80.; cx.notify(); }))
-                                            .child("Small"),
-                                    )
-                                    .child(
-                                        theme_button("zoom-med", if self.zoom > 95. && self.zoom <= 140. { ButtonLook::Primary } else { ButtonLook::Secondary }, theme)
-                                            .on_click(cx.listener(|this, _, _, cx| { this.zoom = 120.; cx.notify(); }))
-                                            .child("Medium"),
-                                    )
-                                    .child(
-                                        theme_button("zoom-lg", if self.zoom > 140. && self.zoom <= 200. { ButtonLook::Primary } else { ButtonLook::Secondary }, theme)
-                                            .on_click(cx.listener(|this, _, _, cx| { this.zoom = 180.; cx.notify(); }))
-                                            .child("Large"),
-                                    )
-                                    .child(
-                                        theme_button("zoom-xl", if self.zoom > 200. { ButtonLook::Primary } else { ButtonLook::Secondary }, theme)
-                                            .on_click(cx.listener(|this, _, _, cx| { this.zoom = 250.; cx.notify(); }))
-                                            .child("Huge"),
-                                    ),
-                            ),
-                    )
-                    // Option 4: Font Size (SF Pro text scaling)
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .py_1p5()
-                            .border_b_1()
-                            .border_color(theme.surface_border)
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .child(
-                                        div()
-                                            .text_size(px(theme::TEXT_BODY))
-                                            .font_weight(gpui::FontWeight::MEDIUM)
-                                            .text_color(theme.text_primary)
-                                            .child("Interface Font Size"),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_size(px(theme::TEXT_CAPTION))
-                                            .text_color(theme.text_faint)
-                                            .child("System typography scale (Apple SF Pro)"),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .flex()
-                                    .gap_1p5()
-                                    .child(
-                                        theme_button("font-sm", if (self.font_size - 12.).abs() < 0.5 { ButtonLook::Primary } else { ButtonLook::Secondary }, theme)
-                                            .on_click(cx.listener(|this, _, _, cx| { this.font_size = 12.; this.save_config(); cx.notify(); }))
-                                            .child("12px"),
-                                    )
-                                    .child(
-                                        theme_button("font-def", if (self.font_size - 14.).abs() < 0.5 { ButtonLook::Primary } else { ButtonLook::Secondary }, theme)
-                                            .on_click(cx.listener(|this, _, _, cx| { this.font_size = 14.; this.save_config(); cx.notify(); }))
-                                            .child("14px"),
-                                    )
-                                    .child(
-                                        theme_button("font-med", if (self.font_size - 15.).abs() < 0.5 { ButtonLook::Primary } else { ButtonLook::Secondary }, theme)
-                                            .on_click(cx.listener(|this, _, _, cx| { this.font_size = 15.; this.save_config(); cx.notify(); }))
-                                            .child("15px"),
-                                    )
-                                    .child(
-                                        theme_button("font-lg", if (self.font_size - 16.).abs() < 0.5 { ButtonLook::Primary } else { ButtonLook::Secondary }, theme)
-                                            .on_click(cx.listener(|this, _, _, cx| { this.font_size = 16.; this.save_config(); cx.notify(); }))
-                                            .child("16px"),
-                                    ),
-                            ),
-                    )
-                    // Section 2: Thumbnails & Performance
-                    .child(
-                        div()
-                            .text_size(px(11.))
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .text_color(theme.accent)
-                            .child("PERFORMANCE & MEDIA"),
-                    )
-                    // Option 5: Thumbnails
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .py_1p5()
-                            .border_b_1()
-                            .border_color(theme.surface_border)
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .child(
-                                        div()
-                                            .text_size(px(theme::TEXT_BODY))
-                                            .font_weight(gpui::FontWeight::MEDIUM)
-                                            .text_color(theme.text_primary)
-                                            .child("Thumbnail Previews"),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_size(px(theme::TEXT_CAPTION))
-                                            .text_color(theme.text_faint)
-                                            .child("Render image and video thumbnails"),
-                                    ),
-                            )
-                            .child(
-                                theme_button(
-                                    "toggle-thumbs-btn",
-                                    if self.enable_thumbnails { ButtonLook::Primary } else { ButtonLook::Secondary },
-                                    theme,
-                                )
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.enable_thumbnails = !this.enable_thumbnails;
-                                    cx.notify();
-                                }))
-                                .child(if self.enable_thumbnails { "ON" } else { "OFF" }),
-                            ),
-                    )
-                    // Option 6: Terminal
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .py_1p5()
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .child(
-                                        div()
-                                            .text_size(px(theme::TEXT_BODY))
-                                            .font_weight(gpui::FontWeight::MEDIUM)
-                                            .text_color(theme.text_primary)
-                                            .child("External Terminal"),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_size(px(theme::TEXT_CAPTION))
-                                            .text_color(theme.text_faint)
-                                            .child("Launch shell at current directory"),
-                                    ),
-                            )
-                            .child(
-                                theme_button("settings-open-term", ButtonLook::Secondary, theme)
-                                    .on_click(cx.listener(|this, _, _, _| {
-                                        open_in_terminal(&this.current_path);
-                                    }))
-                                    .child("Open Terminal"),
+                                        .child(
+                                            theme_button(
+                                                "settings-open-term",
+                                                ButtonLook::Secondary,
+                                                theme,
+                                            )
+                                            .h(px(28.))
+                                            .rounded(px(6.))
+                                            .on_click(cx.listener(|this, _, _, _| {
+                                                open_in_terminal(&this.current_path);
+                                            }))
+                                            .child("Open Terminal"),
+                                        ),
+                                ),
                             ),
                     ),
             )
