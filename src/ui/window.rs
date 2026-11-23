@@ -121,6 +121,7 @@ pub struct MainWindow {
     pub date_filter: DateFilter,
     pub size_filter: SizeFilter,
     pub show_filter_menu: bool,
+    pub show_more_menu: bool,
     pub enable_thumbnails: bool,
     pub confirm_delete: bool,
     pub show_inspector: bool,
@@ -205,6 +206,7 @@ impl MainWindow {
             date_filter: DateFilter::Any,
             size_filter: SizeFilter::Any,
             show_filter_menu: false,
+            show_more_menu: false,
             enable_thumbnails: true,
             confirm_delete: true,
             show_inspector: false,
@@ -263,6 +265,8 @@ impl MainWindow {
         self.current_path = path.clone();
         self.selected_index = None;
         self.search_query.clear();
+        self.show_filter_menu = false;
+        self.show_more_menu = false;
         self.scroll_handle = UniformListScrollHandle::new();
 
         // 1. Instant zero-latency display from DirectoryCache (KDE Dolphin / GNOME Files style)
@@ -725,6 +729,7 @@ impl MainWindow {
                                 )
                                 .on_click(cx.listener(|this, _, _, cx| {
                                     this.show_filter_menu = !this.show_filter_menu;
+                                    this.show_more_menu = false;
                                     cx.notify();
                                 })),
                             )
@@ -733,12 +738,14 @@ impl MainWindow {
                                 theme::macos_joint_button(
                                     "joint-btn-more",
                                     "more-horizontal",
-                                    self.show_command_palette,
+                                    self.show_more_menu,
                                     true,
                                     theme,
                                 )
                                 .on_click(cx.listener(|this, _, _, cx| {
-                                    this.open_command_palette(None, cx);
+                                    this.show_more_menu = !this.show_more_menu;
+                                    this.show_filter_menu = false;
+                                    cx.notify();
                                 })),
                             ),
                     )
@@ -1791,6 +1798,429 @@ impl MainWindow {
             .into_any_element()
     }
 
+    pub fn set_theme_mode(&mut self, mode: theme::ThemeMode, cx: &mut Context<Self>) {
+        self.theme_mode = mode;
+        let mut config = crate::config::Config::load();
+        config.theme = match mode {
+            theme::ThemeMode::Light => "light",
+            theme::ThemeMode::Dark => "dark",
+            theme::ThemeMode::System => "system",
+        }.to_string();
+        config.save();
+        cx.notify();
+    }
+
+    fn render_more_menu(&self, theme: &theme::ThemeColors, cx: &mut Context<Self>) -> AnyElement {
+        let popover_card_bg = theme.card;
+        let popover_border = theme.surface_border;
+
+        let is_grid = self.view_mode == ViewMode::Grid;
+        let view_mode_text = if is_grid { "Switch to List View" } else { "Switch to Grid View" };
+        let view_mode_icon = if is_grid { "list" } else { "grid" };
+
+        let hidden_text = if self.show_hidden { "Hide Hidden Files" } else { "Show Hidden Files" };
+        let inspector_text = if self.show_inspector { "Hide Inspector" } else { "Show Inspector" };
+
+        div()
+            .id("more-menu-backdrop")
+            .absolute()
+            .inset_0()
+            .bg(gpui::rgba(0x00000000))
+            .flex()
+            .items_start()
+            .justify_end()
+            .pt(px(48.))
+            .pr(px(180.))
+            .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.show_more_menu = false;
+                cx.notify();
+            }))
+            .child(
+                div()
+                    .id("more-menu-card")
+                    .relative()
+                    .w(px(250.))
+                    .bg(popover_card_bg)
+                    .border_1()
+                    .border_color(popover_border)
+                    .shadow(theme::popover_shadows(theme))
+                    .rounded(px(14.))
+                    .overflow_hidden()
+                    .p_2p5()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
+                    .on_click(|_, _, cx| cx.stop_propagation())
+                    // 1. Appearance / Theme Section
+                    .child(
+                        div()
+                            .px_2()
+                            .pt_1()
+                            .pb_1()
+                            .text_size(px(10.5))
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .text_color(theme.text_faint)
+                            .child("APPEARANCE"),
+                    )
+                    .child(
+                        div()
+                            .h(px(28.))
+                            .p_0p5()
+                            .rounded(px(7.))
+                            .bg(if theme.is_dark { gpui::rgba(0x00000030) } else { gpui::rgba(0x0000000d) })
+                            .flex()
+                            .items_center()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .id("theme-btn-system")
+                                    .flex_1()
+                                    .h_full()
+                                    .rounded(px(5.))
+                                    .cursor_pointer()
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .gap_1()
+                                    .text_size(px(11.5))
+                                    .when(self.theme_mode == theme::ThemeMode::System, |d| {
+                                        d.bg(theme.card)
+                                            .shadow(theme::control_shadow(theme))
+                                            .text_color(theme.text_primary)
+                                            .font_weight(gpui::FontWeight::MEDIUM)
+                                    })
+                                    .when(self.theme_mode != theme::ThemeMode::System, |d| {
+                                        d.text_color(theme.text_muted)
+                                            .hover(|s| s.bg(theme.button_hover).text_color(theme.text_primary))
+                                    })
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.set_theme_mode(theme::ThemeMode::System, cx);
+                                    }))
+                                    .child(icon("sliders", 12.))
+                                    .child("Auto"),
+                            )
+                            .child(
+                                div()
+                                    .id("theme-btn-light")
+                                    .flex_1()
+                                    .h_full()
+                                    .rounded(px(5.))
+                                    .cursor_pointer()
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .gap_1()
+                                    .text_size(px(11.5))
+                                    .when(self.theme_mode == theme::ThemeMode::Light, |d| {
+                                        d.bg(theme.card)
+                                            .shadow(theme::control_shadow(theme))
+                                            .text_color(theme.text_primary)
+                                            .font_weight(gpui::FontWeight::MEDIUM)
+                                    })
+                                    .when(self.theme_mode != theme::ThemeMode::Light, |d| {
+                                        d.text_color(theme.text_muted)
+                                            .hover(|s| s.bg(theme.button_hover).text_color(theme.text_primary))
+                                    })
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.set_theme_mode(theme::ThemeMode::Light, cx);
+                                    }))
+                                    .child(icon("palette", 12.))
+                                    .child("Light"),
+                            )
+                            .child(
+                                div()
+                                    .id("theme-btn-dark")
+                                    .flex_1()
+                                    .h_full()
+                                    .rounded(px(5.))
+                                    .cursor_pointer()
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .gap_1()
+                                    .text_size(px(11.5))
+                                    .when(self.theme_mode == theme::ThemeMode::Dark, |d| {
+                                        d.bg(theme.card)
+                                            .shadow(theme::control_shadow(theme))
+                                            .text_color(theme.text_primary)
+                                            .font_weight(gpui::FontWeight::MEDIUM)
+                                    })
+                                    .when(self.theme_mode != theme::ThemeMode::Dark, |d| {
+                                        d.text_color(theme.text_muted)
+                                            .hover(|s| s.bg(theme.button_hover).text_color(theme.text_primary))
+                                    })
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.set_theme_mode(theme::ThemeMode::Dark, cx);
+                                    }))
+                                    .child(icon("palette", 12.))
+                                    .child("Dark"),
+                            ),
+                    )
+                    // Divider
+                    .child(div().h(px(1.)).mx_1().my_1().bg(theme.surface_border))
+                    // 2. View Options
+                    .child(
+                        div()
+                            .id("more-opt-view-mode")
+                            .h(px(30.))
+                            .px_2()
+                            .rounded(px(6.))
+                            .cursor_pointer()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .hover(|s| s.bg(theme.sidebar_hover))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.show_more_menu = false;
+                                let next = if this.view_mode == ViewMode::Grid { ViewMode::List } else { ViewMode::Grid };
+                                this.set_view_mode(next, cx);
+                            }))
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_2p5()
+                                    .child(icon(view_mode_icon, 14.).text_color(theme.text_muted))
+                                    .child(
+                                        div()
+                                            .text_size(px(12.5))
+                                            .text_color(theme.text_primary)
+                                            .child(view_mode_text),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(11.))
+                                    .text_color(theme.text_faint)
+                                    .child("Ctrl+V"),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .id("more-opt-hidden")
+                            .h(px(30.))
+                            .px_2()
+                            .rounded(px(6.))
+                            .cursor_pointer()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .hover(|s| s.bg(theme.sidebar_hover))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.show_more_menu = false;
+                                this.show_hidden = !this.show_hidden;
+                                this.sort_and_filter();
+                                cx.notify();
+                            }))
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_2p5()
+                                    .child(icon("eye", 14.).text_color(theme.text_muted))
+                                    .child(
+                                        div()
+                                            .text_size(px(12.5))
+                                            .text_color(theme.text_primary)
+                                            .child(hidden_text),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(11.))
+                                    .text_color(theme.text_faint)
+                                    .child("Ctrl+H"),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .id("more-opt-inspector")
+                            .h(px(30.))
+                            .px_2()
+                            .rounded(px(6.))
+                            .cursor_pointer()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .hover(|s| s.bg(theme.sidebar_hover))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.show_more_menu = false;
+                                this.toggle_inspector(cx);
+                            }))
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_2p5()
+                                    .child(icon("sliders", 14.).text_color(theme.text_muted))
+                                    .child(
+                                        div()
+                                            .text_size(px(12.5))
+                                            .text_color(theme.text_primary)
+                                            .child(inspector_text),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(11.))
+                                    .text_color(theme.text_faint)
+                                    .child("Ctrl+I"),
+                            ),
+                    )
+                    // Divider
+                    .child(div().h(px(1.)).mx_1().my_1().bg(theme.surface_border))
+                    // 3. Actions
+                    .child(
+                        div()
+                            .id("more-opt-new-folder")
+                            .h(px(30.))
+                            .px_2()
+                            .rounded(px(6.))
+                            .cursor_pointer()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .hover(|s| s.bg(theme.sidebar_hover))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.show_more_menu = false;
+                                this.create_new_folder(cx);
+                            }))
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_2p5()
+                                    .child(icon("add-01", 14.).text_color(theme.text_muted))
+                                    .child(
+                                        div()
+                                            .text_size(px(12.5))
+                                            .text_color(theme.text_primary)
+                                            .child("New Folder"),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(11.))
+                                    .text_color(theme.text_faint)
+                                    .child("Ctrl+N"),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .id("more-opt-terminal")
+                            .h(px(30.))
+                            .px_2()
+                            .rounded(px(6.))
+                            .cursor_pointer()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .hover(|s| s.bg(theme.sidebar_hover))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.show_more_menu = false;
+                                open_in_terminal(&this.current_path);
+                                cx.notify();
+                            }))
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_2p5()
+                                    .child(icon("terminal", 14.).text_color(theme.text_muted))
+                                    .child(
+                                        div()
+                                            .text_size(px(12.5))
+                                            .text_color(theme.text_primary)
+                                            .child("Open in Terminal"),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(11.))
+                                    .text_color(theme.text_faint)
+                                    .child("Ctrl+T"),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .id("more-opt-refresh")
+                            .h(px(30.))
+                            .px_2()
+                            .rounded(px(6.))
+                            .cursor_pointer()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .hover(|s| s.bg(theme.sidebar_hover))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.show_more_menu = false;
+                                this.refresh(cx);
+                            }))
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_2p5()
+                                    .child(icon("rotate-cw", 14.).text_color(theme.text_muted))
+                                    .child(
+                                        div()
+                                            .text_size(px(12.5))
+                                            .text_color(theme.text_primary)
+                                            .child("Refresh Directory"),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(11.))
+                                    .text_color(theme.text_faint)
+                                    .child("Ctrl+R"),
+                            ),
+                    )
+                    // Divider
+                    .child(div().h(px(1.)).mx_1().my_1().bg(theme.surface_border))
+                    // 4. Settings
+                    .child(
+                        div()
+                            .id("more-opt-settings")
+                            .h(px(30.))
+                            .px_2()
+                            .rounded(px(6.))
+                            .cursor_pointer()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .hover(|s| s.bg(theme.sidebar_hover))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.show_more_menu = false;
+                                this.show_settings_modal = true;
+                                cx.notify();
+                            }))
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_2p5()
+                                    .child(icon("settings", 14.).text_color(theme.text_muted))
+                                    .child(
+                                        div()
+                                            .text_size(px(12.5))
+                                            .text_color(theme.text_primary)
+                                            .child("Settings & Preferences..."),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(11.))
+                                    .text_color(theme.text_faint)
+                                    .child("Ctrl+,"),
+                            ),
+                    ),
+            )
+            .into_any_element()
+    }
+
     fn render_active_filters_bar(&self, theme: &theme::ThemeColors, cx: &mut Context<Self>) -> Div {
         div()
             .h(px(28.))
@@ -1906,20 +2336,22 @@ impl MainWindow {
 
         let mut nav = Vec::new();
         if let Some(p) = dirs::home_dir() {
+            let path_display = p.to_string_lossy().to_string();
             nav.push(PaletteItem {
                 section: "Navigation",
                 title: "Home".to_string(),
-                subtitle: None,
+                subtitle: Some(path_display),
                 icon_name: "home",
                 shortcut: Some("H"),
                 action: PaletteAction::Navigate(p),
             });
         }
         if let Some(p) = dirs::document_dir() {
+            let path_display = p.to_string_lossy().to_string();
             nav.push(PaletteItem {
                 section: "Navigation",
                 title: "Work".to_string(),
-                subtitle: None,
+                subtitle: Some(path_display),
                 icon_name: "user",
                 shortcut: Some("W"),
                 action: PaletteAction::Navigate(p),
@@ -1927,70 +2359,77 @@ impl MainWindow {
         }
         let doc_dir = dirs::document_dir().or_else(|| dirs::home_dir().map(|h| h.join("Documents")));
         if let Some(p) = &doc_dir {
+            let path_display = p.to_string_lossy().to_string();
             nav.push(PaletteItem {
                 section: "Navigation",
                 title: "Projects".to_string(),
-                subtitle: None,
+                subtitle: Some(path_display),
                 icon_name: "layers",
                 shortcut: Some("P"),
                 action: PaletteAction::Navigate(p.clone()),
             });
         }
         if let Some(p) = dirs::download_dir() {
+            let path_display = p.to_string_lossy().to_string();
             nav.push(PaletteItem {
                 section: "Navigation",
                 title: "Downloads".to_string(),
-                subtitle: None,
+                subtitle: Some(path_display),
                 icon_name: "download",
                 shortcut: Some("D"),
                 action: PaletteAction::Navigate(p),
             });
         }
         if let Some(p) = dirs::home_dir() {
+            let path_display = p.to_string_lossy().to_string();
             nav.push(PaletteItem {
                 section: "Navigation",
                 title: "Bookmarks".to_string(),
-                subtitle: None,
+                subtitle: Some(path_display),
                 icon_name: "bookmark",
                 shortcut: Some("M"),
                 action: PaletteAction::Navigate(p),
             });
         }
         if let Some(p) = dirs::desktop_dir() {
+            let path_display = p.to_string_lossy().to_string();
             nav.push(PaletteItem {
                 section: "Navigation",
                 title: "Desktop".to_string(),
-                subtitle: None,
+                subtitle: Some(path_display),
                 icon_name: "app-window",
                 shortcut: Some("K"),
                 action: PaletteAction::Navigate(p),
             });
         }
         if let Some(p) = dirs::picture_dir() {
+            let path_display = p.to_string_lossy().to_string();
             nav.push(PaletteItem {
                 section: "Navigation",
                 title: "Pictures".to_string(),
-                subtitle: None,
+                subtitle: Some(path_display),
                 icon_name: "image",
                 shortcut: Some("I"),
                 action: PaletteAction::Navigate(p),
             });
         }
         if let Some(p) = dirs::video_dir() {
+            let path_display = p.to_string_lossy().to_string();
             nav.push(PaletteItem {
                 section: "Navigation",
                 title: "Videos".to_string(),
-                subtitle: None,
+                subtitle: Some(path_display),
                 icon_name: "video",
                 shortcut: Some("V"),
                 action: PaletteAction::Navigate(p),
             });
         }
         if let Some(p) = dirs::audio_dir() {
+            let path_display = p.to_string_lossy().to_string();
             nav.push(PaletteItem {
                 section: "Navigation",
                 title: "Music".to_string(),
-                subtitle: None,
+                subtitle: Some(path_display),
                 icon_name: "audio",
                 shortcut: Some("S"),
                 action: PaletteAction::Navigate(p),
@@ -2004,10 +2443,11 @@ impl MainWindow {
             for name in candidate_names {
                 let candidate_path = doc_path.join(name);
                 if candidate_path.is_dir() {
+                    let sub = candidate_path.to_string_lossy().to_string();
                     projects.push(PaletteItem {
                         section: "Projects",
                         title: name.to_string(),
-                        subtitle: None,
+                        subtitle: Some(sub),
                         icon_name: "rocket",
                         shortcut: None,
                         action: PaletteAction::Navigate(candidate_path),
@@ -2022,10 +2462,11 @@ impl MainWindow {
                         if path.is_dir() {
                             let title = path.file_name().unwrap_or_default().to_string_lossy().to_string();
                             if !title.starts_with('.') {
+                                let sub = path.to_string_lossy().to_string();
                                 projects.push(PaletteItem {
                                     section: "Projects",
                                     title,
-                                    subtitle: None,
+                                    subtitle: Some(sub),
                                     icon_name: "rocket",
                                     shortcut: None,
                                     action: PaletteAction::Navigate(path),
@@ -2037,181 +2478,48 @@ impl MainWindow {
             }
         }
 
-        let actions = vec![
-            PaletteItem {
-                section: "Commands",
-                title: "Create New Folder".to_string(),
-                subtitle: Some("Create a new directory".to_string()),
-                icon_name: "add-01",
-                shortcut: Some("Ctrl+N"),
-                action: PaletteAction::NewFolder,
-            },
-            PaletteItem {
-                section: "Commands",
-                title: if self.view_mode == ViewMode::Grid { "Switch to List View".to_string() } else { "Switch to Grid View".to_string() },
-                subtitle: Some("Toggle display layout".to_string()),
-                icon_name: if self.view_mode == ViewMode::Grid { "list" } else { "grid" },
-                shortcut: Some("Ctrl+V"),
-                action: PaletteAction::ToggleViewMode,
-            },
-            PaletteItem {
-                section: "Commands",
-                title: if self.show_hidden { "Hide Hidden Files".to_string() } else { "Show Hidden Files".to_string() },
-                subtitle: Some("Toggle dotfiles visibility".to_string()),
-                icon_name: "eye",
-                shortcut: Some("Ctrl+H"),
-                action: PaletteAction::ToggleHidden,
-            },
-            PaletteItem {
-                section: "Commands",
-                title: "Toggle Properties Inspector".to_string(),
-                subtitle: Some("Show or hide sidebar properties".to_string()),
-                icon_name: "sliders",
-                shortcut: Some("Ctrl+I"),
-                action: PaletteAction::ToggleInspector,
-            },
-            PaletteItem {
-                section: "Commands",
-                title: "Open Folder in Terminal".to_string(),
-                subtitle: Some("Launch terminal at current path".to_string()),
-                icon_name: "terminal",
-                shortcut: Some("Ctrl+T"),
-                action: PaletteAction::OpenTerminal,
-            },
-            PaletteItem {
-                section: "Commands",
-                title: "Settings & Preferences".to_string(),
-                subtitle: Some("Configure Shark file manager".to_string()),
-                icon_name: "settings",
-                shortcut: Some("Ctrl+,"),
-                action: PaletteAction::OpenSettings,
-            },
-            PaletteItem {
-                section: "Commands",
-                title: "Refresh Directory".to_string(),
-                subtitle: Some("Reload folder from disk".to_string()),
-                icon_name: "rotate-cw",
-                shortcut: Some("Ctrl+R"),
-                action: PaletteAction::Refresh,
-            },
-            PaletteItem {
-                section: "Commands",
-                title: "Theme: System (Auto)".to_string(),
-                subtitle: Some("Follow OS light/dark appearance".to_string()),
-                icon_name: "sliders",
-                shortcut: None,
-                action: PaletteAction::SetTheme(theme::ThemeMode::System),
-            },
-            PaletteItem {
-                section: "Commands",
-                title: "Theme: Light Mode".to_string(),
-                subtitle: Some("Switch to clean macOS light mode".to_string()),
-                icon_name: "palette",
-                shortcut: None,
-                action: PaletteAction::SetTheme(theme::ThemeMode::Light),
-            },
-            PaletteItem {
-                section: "Commands",
-                title: "Theme: Dark Mode".to_string(),
-                subtitle: Some("Switch to solid macOS dark mode".to_string()),
-                icon_name: "palette",
-                shortcut: None,
-                action: PaletteAction::SetTheme(theme::ThemeMode::Dark),
-            },
-        ];
-
-        let filters = vec![
-            PaletteItem {
-                section: "Filters",
-                title: "Filter: Only Images".to_string(),
-                subtitle: Some("Show PNG, JPG, WebP, SVG files".to_string()),
-                icon_name: "image",
-                shortcut: None,
-                action: PaletteAction::SetTypeFilter(TypeFilter::Images),
-            },
-            PaletteItem {
-                section: "Filters",
-                title: "Filter: Only Documents & Text".to_string(),
-                subtitle: Some("Show TXT, MD, PDF, CSV documents".to_string()),
-                icon_name: "document",
-                shortcut: None,
-                action: PaletteAction::SetTypeFilter(TypeFilter::Documents),
-            },
-            PaletteItem {
-                section: "Filters",
-                title: "Filter: Only Code & Scripts".to_string(),
-                subtitle: Some("Show RS, PY, JS, HTML, JSON files".to_string()),
-                icon_name: "code",
-                shortcut: None,
-                action: PaletteAction::SetTypeFilter(TypeFilter::Code),
-            },
-            PaletteItem {
-                section: "Filters",
-                title: "Filter: Modified Past 7 Days".to_string(),
-                subtitle: Some("Show files changed this week".to_string()),
-                icon_name: "clock",
-                shortcut: None,
-                action: PaletteAction::SetDateFilter(DateFilter::Last7Days),
-            },
-            PaletteItem {
-                section: "Filters",
-                title: "Filter: Large Files (> 100 MB)".to_string(),
-                subtitle: Some("Show files larger than 100 MB".to_string()),
-                icon_name: "hard-drive",
-                shortcut: None,
-                action: PaletteAction::SetSizeFilter(SizeFilter::Large),
-            },
-            PaletteItem {
-                section: "Filters",
-                title: "Clear All Active Filters".to_string(),
-                subtitle: Some("Reset to show all directory contents".to_string()),
-                icon_name: "rotate-ccw",
-                shortcut: None,
-                action: PaletteAction::ResetFilters,
-            },
-        ];
-
         for item in nav {
-            if q.is_empty() || item.title.to_lowercase().contains(&q) {
+            if q.is_empty() || item.title.to_lowercase().contains(&q) || item.subtitle.as_deref().unwrap_or("").to_lowercase().contains(&q) {
                 items.push(item);
             }
         }
         for item in projects {
-            if q.is_empty() || item.title.to_lowercase().contains(&q) {
-                items.push(item);
-            }
-        }
-        for item in actions {
-            if q.is_empty() || item.title.to_lowercase().contains(&q) {
-                items.push(item);
-            }
-        }
-        for item in filters {
-            if q.is_empty() || item.title.to_lowercase().contains(&q) {
+            if q.is_empty() || item.title.to_lowercase().contains(&q) || item.subtitle.as_deref().unwrap_or("").to_lowercase().contains(&q) {
                 items.push(item);
             }
         }
 
         if !q.is_empty() {
+            let mut folder_matches = 0;
             let mut file_matches = 0;
+
             for entry in &self.entries {
-                if file_matches >= 20 {
-                    break;
-                }
                 if entry.name_lower.contains(&q) {
-                    file_matches += 1;
-                    items.push(PaletteItem {
-                        section: "Files",
-                        title: entry.name.clone(),
-                        subtitle: Some(format!("{} • {}", entry.type_description(), entry.formatted_size())),
-                        icon_name: if entry.is_directory { "folder" } else { entry.icon_name },
-                        shortcut: None,
-                        action: if entry.is_directory {
-                            PaletteAction::Navigate(entry.path.clone())
-                        } else {
-                            PaletteAction::OpenFile(entry.path.clone())
-                        },
-                    });
+                    if entry.is_directory {
+                        if folder_matches < 15 {
+                            folder_matches += 1;
+                            items.push(PaletteItem {
+                                section: "Folders",
+                                title: entry.name.clone(),
+                                subtitle: Some(entry.path.to_string_lossy().to_string()),
+                                icon_name: "folder",
+                                shortcut: None,
+                                action: PaletteAction::Navigate(entry.path.clone()),
+                            });
+                        }
+                    } else {
+                        if file_matches < 25 {
+                            file_matches += 1;
+                            items.push(PaletteItem {
+                                section: "Files",
+                                title: entry.name.clone(),
+                                subtitle: Some(format!("{} • {}", entry.type_description(), entry.formatted_size())),
+                                icon_name: entry.icon_name,
+                                shortcut: None,
+                                action: PaletteAction::OpenFile(entry.path.clone()),
+                            });
+                        }
+                    }
                 }
             }
         }
@@ -2321,28 +2629,23 @@ impl MainWindow {
 
         let mut rendered_items = Vec::new();
         let mut last_section = "";
+        let mut row_top = 0.0;
+        let mut highlight = None;
 
         for (idx, item) in items.iter().enumerate() {
             if item.section != last_section {
-                if !last_section.is_empty() {
-                    rendered_items.push(
-                        div()
-                            .h(px(1.))
-                            .mx_2()
-                            .my_1p5()
-                            .bg(theme.surface_border)
-                            .into_any_element(),
-                    );
-                }
+                row_top += 29.0;
                 last_section = item.section;
                 rendered_items.push(
                     div()
-                        .px_3()
-                        .pt_1p5()
-                        .pb_1()
+                        .px_2p5()
+                        .h(px(29.))
+                        .flex_shrink_0()
+                        .flex()
+                        .items_center()
                         .text_size(px(11.))
                         .font_weight(gpui::FontWeight::SEMIBOLD)
-                        .text_color(theme.text_faint)
+                        .text_color(theme.text_muted)
                         .child(item.section)
                         .into_any_element(),
                 );
@@ -2351,25 +2654,26 @@ impl MainWindow {
             let is_selected = idx == selected_idx;
             let action = item.action.clone();
             let title = item.title.clone();
-            let subtitle = item.subtitle.clone();
+            let subtitle = match item.section {
+                "Navigation" | "Projects" => None,
+                _ => item.subtitle.clone(),
+            };
+            let row_height = if subtitle.is_some() { 38.0 } else { 33.0 };
+            if is_selected { highlight = Some((row_top, row_height)); }
+            row_top += row_height;
             let icon_name = item.icon_name;
             let shortcut = item.shortcut;
 
             let row = div()
                 .id(ElementId::from(format!("palette-item-{}", idx)))
-                .h(px(36.))
-                .px_3()
+                .h(px(row_height))
+                .flex_shrink_0()
+                .px_2p5()
                 .rounded(px(8.))
                 .flex()
                 .items_center()
                 .justify_between()
                 .cursor_pointer()
-                .when(is_selected, |d| {
-                    d.bg(theme.sidebar_selected)
-                })
-                .when(!is_selected, |d| {
-                    d.hover(|s| s.bg(theme.sidebar_hover))
-                })
                 .on_mouse_move(cx.listener(move |this, _ev: &MouseMoveEvent, _, cx| {
                     if this.command_palette_selected != idx {
                         this.command_palette_selected = idx;
@@ -2381,84 +2685,67 @@ impl MainWindow {
                 }))
                 .child(
                     div()
+                        .flex_1()
+                        .min_w_0()
                         .flex()
                         .items_center()
-                        .gap_3()
+                        .gap_2()
                         .child(
-                            icon(icon_name, 16.)
-                                .text_color(if is_selected { theme.text_primary } else { theme.text_muted })
+                            icon(icon_name, 15.)
+                                .flex_shrink_0()
+                                .text_color(if is_selected { theme.text_primary } else { theme.text_muted }),
                         )
                         .child(
                             div()
+                                .flex_1()
+                                .min_w_0()
                                 .flex()
-                                .items_center()
-                                .gap_2()
+                                .flex_col()
+                                .justify_center()
                                 .child(
                                     div()
                                         .text_size(px(13.))
+                                        .line_height(px(17.))
+                                        .font_weight(if is_selected { gpui::FontWeight::SEMIBOLD } else { gpui::FontWeight::NORMAL })
                                         .text_color(theme.text_primary)
-                                        .font_weight(if is_selected { gpui::FontWeight::MEDIUM } else { gpui::FontWeight::NORMAL })
+                                        .truncate()
                                         .child(title),
                                 )
                                 .when_some(subtitle, |d, sub| {
                                     d.child(
                                         div()
                                             .text_size(px(11.))
-                                            .text_color(theme.text_faint)
-                                            .child(format!("• {}", sub)),
+                                            .line_height(px(14.))
+                                            .text_color(theme.text_muted)
+                                            .truncate()
+                                            .child(sub),
                                     )
                                 }),
                         ),
                 )
                 .when_some(shortcut, |d, sc| {
-                    if sc.len() == 1 {
-                        d.child(
-                            div()
-                                .text_size(px(12.))
-                                .font_weight(gpui::FontWeight::MEDIUM)
-                                .text_color(theme.text_faint)
-                                .child(sc),
-                        )
-                    } else {
-                        d.child(
-                            div()
-                                .px_1p5()
-                                .py_0p5()
-                                .rounded(px(4.))
-                                .bg(theme.button_fill)
-                                .border_1()
-                                .border_color(theme.button_border)
-                                .text_size(px(10.))
-                                .text_color(theme.text_muted)
-                                .child(sc),
-                        )
-                    }
+                    d.child(
+                        div()
+                            .flex_shrink_0()
+                            .ml_2()
+                            .text_size(px(11.))
+                            .text_color(theme.text_muted)
+                            .child(sc),
+                    )
                 })
                 .into_any_element();
 
             rendered_items.push(row);
         }
 
-        let user_label = std::env::var("USER").unwrap_or_else(|_| "Sahilcodex".to_string());
-        let capitalized_user = if user_label == "sahilcodex" {
-            "Sahilcodex".to_string()
-        } else {
-            let mut c = user_label.chars();
-            match c.next() {
-                None => "Shark".to_string(),
-                Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
-            }
-        };
-
         let action_verb = if let Some(item) = items.get(selected_idx) {
             match item.section {
-                "Navigation" | "Projects" => "Go to page",
-                "Commands" => "Run command",
-                "Filters" => "Apply filter",
-                _ => "Open file",
+                "Navigation" | "Projects" | "Folders" => "Go to folder",
+                "Files" => "Open file",
+                _ => "Open",
             }
         } else {
-            "Go to page"
+            "Open"
         };
 
         // Live preview of highlighted palette item
@@ -2512,12 +2799,9 @@ impl MainWindow {
                             // Thumbnail / Icon card - bigger preview!
                             .child(
                                 div()
-                                    .h(px(180.))
+                                    .h(px(142.))
                                     .w_full()
-                                    .rounded(px(10.))
-                                    .bg(if theme.is_dark { gpui::rgba(0xffffff08) } else { gpui::rgba(0x00000006) })
-                                    .border_1()
-                                    .border_color(theme.surface_border)
+
                                     .flex()
                                     .flex_col()
                                     .items_center()
@@ -2526,7 +2810,7 @@ impl MainWindow {
                                     .overflow_hidden()
                                     .child(match thumb_path {
                                         Some(p) => img(p)
-                                            .max_h(px(170.))
+                                            .max_h(px(132.))
                                             .max_w(px(270.))
                                             .rounded(px(8.))
                                             .into_any_element(),
@@ -2559,10 +2843,8 @@ impl MainWindow {
                             .child(
                                 div()
                                     .w_full()
-                                    .p_3()
-                                    .rounded(px(8.))
-                                    .bg(if theme.is_dark { gpui::rgba(0xffffff06) } else { gpui::rgba(0x00000004) })
-                                    .border_1()
+                                    .pt_3()
+                                    .border_t_1()
                                     .border_color(theme.surface_border)
                                     .flex()
                                     .flex_col()
@@ -2669,8 +2951,9 @@ impl MainWindow {
         let card = div()
             .id("command-palette-card")
             .relative()
-            .h(px(520.))
-            .bg(if theme.is_dark { gpui::rgba(0x141824b0) } else { gpui::rgba(0xf6f8fcad) })
+            .h(px(420.))
+            .max_h_full()
+            .bg(if theme.is_dark { gpui::rgba(0x1b1d24f5) } else { gpui::rgba(0xfcfcfdf8) })
             .border_1()
             .border_color(if theme.is_dark { gpui::rgba(0xffffff1c) } else { gpui::rgba(0x00000014) })
             .shadow(theme::floating_panel_shadows(theme))
@@ -2680,7 +2963,6 @@ impl MainWindow {
             .overflow_hidden()
             .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
             .on_click(|_, _, cx| cx.stop_propagation())
-            .child(theme::glass_specular_sheen(theme))
             .with_animation(
                 ("command-palette-width-spring", search_epoch),
                 crate::ui::spring::SPRING_SILKY.into_animation(340),
@@ -2700,29 +2982,39 @@ impl MainWindow {
             // Header Input Row
             .child(
                 div()
-                    .h(px(48.))
-                    .px_4()
+                    .min_h(px(34.))
+                    .flex_shrink_0()
+                    .mx_2()
+                    .mt_2()
+                    .px_2()
+                    .rounded(px(8.))
+                    .bg(theme.search_fill)
+                    .border_1()
+                    .border_color(theme.surface_border)
                     .flex()
                     .items_center()
                     .justify_between()
-                    .gap_3()
+                    .gap_2()
                     .child(
                         div()
                             .flex_1()
+                            .min_w_0()
                             .flex()
                             .items_center()
-                            .gap_3()
-                            .child(icon("search", 16.).text_color(theme.text_faint))
+                            .gap_2()
+                            .child(icon("search", 15.).flex_shrink_0().text_color(theme.text_muted))
                             .child(
                                 div()
-                                    .text_size(px(14.))
+                                    .text_size(px(13.))
+                                    .min_w_0()
+                                    .truncate()
                                     .text_color(if self.command_palette_query.is_empty() {
-                                        theme.text_faint
+                                        theme.text_muted
                                     } else {
                                         theme.text_primary
                                     })
                                     .child(if self.command_palette_query.is_empty() {
-                                        "Type a command or search...".to_string()
+                                        "Search files and folders...".to_string()
                                     } else {
                                         format!("{}|", self.command_palette_query)
                                     }),
@@ -2730,13 +3022,12 @@ impl MainWindow {
                     )
                     .child(
                         icon_button("close-palette", "cancel-01", false, true)
+                            .size(px(24.))
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.close_command_palette(cx);
                             })),
                     ),
             )
-            // Divider
-            .child(div().h(px(1.)).w_full().bg(theme.surface_border))
             // Split Body: Left List + Right Preview
             .child(
                 div()
@@ -2756,30 +3047,66 @@ impl MainWindow {
                                     .id("palette-items-list")
                                     .flex_1()
                                     .overflow_y_scroll()
-                                    .p_2()
+                                    .px_2()
+                                    .pb_2()
                                     .flex()
                                     .flex_col()
-                                    .gap_0p5()
                                     .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
-                                    .children(rendered_items),
+                                    .child(
+                                        div().relative().flex().flex_col()
+                                            .when_some(highlight, |list, (top, height)| {
+                                                list.child(
+                                                    div().id("palette-hover-pill").absolute()
+                                                        .left_0().right_0().rounded(px(8.))
+                                                        .bg(theme.sidebar_selected)
+                                                        .with_spring(
+                                                            "palette-hover-position",
+                                                            gpui::SpringAnimation::new(gpui::SpringConfig::new(420.0, 32.0, 0.55)).to(top),
+                                                            move |pill, y| pill.top(px(y)).h(px(height)),
+                                                        ),
+                                                )
+                                            })
+                                            .children(rendered_items),
+                                    ),
                             )
-                            // Footer
-                            .child(
+
+                    )
+                    // Right Preview Pane with Spring Fade & Reveal
+                    .child(
+                        div()
+                            .w(px(310.))
+                            .flex_shrink_0()
+                            .h_full()
+                            .overflow_hidden()
+                            .with_animation(
+                                ("palette-preview-fade", search_epoch),
+                                crate::ui::spring::SPRING_SILKY.into_animation(300),
+                                move |fade_div, progress| {
+                                    let opacity = if search_epoch == 0 {
+                                        if has_query { 1.0 } else { 0.0 }
+                                    } else {
+                                        let p = progress.clamp(0.0, 1.0);
+                                        if has_query { p } else { 1.0 - p }
+                                    };
+                                    fade_div.opacity(opacity)
+                                },
+                            )
+                            .child(div().id("palette-preview-scroll").h_full().overflow_y_scroll().child(preview_pane)),
+                    ),
+            )
+            // Shared footer across results and preview.
+            .child(
                                 div()
-                                    .h(px(34.))
-                                    .px_4()
-                                    .bg(if theme.is_dark { gpui::rgba(0x0000001c) } else { gpui::rgba(0x00000008) })
+                                    .h(px(32.))
+                                    .flex_shrink_0()
+                                    .px_3()
                                     .border_t_1()
                                     .border_color(theme.surface_border)
                                     .flex()
                                     .items_center()
-                                    .justify_between()
+                                    .justify_end()
                                     .text_size(px(11.))
-                                    .text_color(theme.text_faint)
-                                    .child(
-                                        div()
-                                            .child(capitalized_user),
-                                    )
+                                    .text_color(theme.text_muted)
                                     .child(
                                         div()
                                             .flex()
@@ -2803,7 +3130,7 @@ impl MainWindow {
                                                     .flex()
                                                     .items_center()
                                                     .gap_1p5()
-                                                    .child("Exit")
+                                                    .child("Close")
                                                     .child(
                                                         div()
                                                             .px_1()
@@ -2818,31 +3145,7 @@ impl MainWindow {
                                                     ),
                                             ),
                                     ),
-                             ),
-                    )
-                    // Right Preview Pane with Spring Fade & Reveal
-                    .child(
-                        div()
-                            .w(px(310.))
-                            .flex_shrink_0()
-                            .h_full()
-                            .overflow_hidden()
-                            .with_animation(
-                                ("palette-preview-fade", search_epoch),
-                                crate::ui::search_bar::SPRING_SILKY.into_animation(300),
-                                move |fade_div, progress| {
-                                    let opacity = if search_epoch == 0 {
-                                        if has_query { 1.0 } else { 0.0 }
-                                    } else {
-                                        let p = progress.clamp(0.0, 1.0);
-                                        if has_query { p } else { 1.0 - p }
-                                    };
-                                    fade_div.opacity(opacity)
-                                },
-                            )
-                            .child(preview_pane),
-                    ),
-            );
+                             );
 
         div()
             .id("command-palette-backdrop")
@@ -3969,6 +4272,8 @@ impl Render for MainWindow {
                     "escape" => {
                         this.selected_index = None;
                         this.show_settings_modal = false;
+                        this.show_filter_menu = false;
+                        this.show_more_menu = false;
                         this.close_command_palette(cx);
                         this.search_query.clear();
                         this.sort_and_filter();
@@ -4011,6 +4316,9 @@ impl Render for MainWindow {
             )
             .when(self.show_filter_menu, |d| {
                 d.child(self.render_filter_popover(&theme, cx))
+            })
+            .when(self.show_more_menu, |d| {
+                d.child(self.render_more_menu(&theme, cx))
             })
             .when(self.show_settings_modal, |d| {
                 d.child(self.render_settings_modal(&theme, cx))
