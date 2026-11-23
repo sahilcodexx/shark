@@ -252,14 +252,8 @@ pub fn popover_shadows(theme: &ThemeColors) -> Vec<BoxShadow> {
     }
 }
 
-pub fn glass_specular_sheen(theme: &ThemeColors) -> Div {
+pub fn glass_specular_sheen(_theme: &ThemeColors) -> Div {
     div()
-        .absolute()
-        .top_0()
-        .left_0()
-        .right_0()
-        .h(px(1.0))
-        .bg(if theme.is_dark { gpui::rgba(0xffffff24) } else { gpui::rgba(0xffffff75) })
 }
 
 // Fallback tokens for static calls
