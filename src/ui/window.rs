@@ -150,7 +150,6 @@ pub struct MainWindow {
     pub background_mode: String,
     pub blur_coordinator: Option<crate::platform::PlatformBlurCoordinator>,
     pub window_size: (i32, i32),
-    pub animated_search_bar: crate::ui::search_bar::SearchBarState,
     appearance_subscription: Option<gpui::Subscription>,
     bounds_subscription: Option<gpui::Subscription>,
 }
@@ -235,7 +234,6 @@ impl MainWindow {
             background_mode: cfg.background_mode.clone(),
             blur_coordinator,
             window_size: (cfg.window_width, cfg.window_height),
-            animated_search_bar: crate::ui::search_bar::SearchBarState::new(),
             appearance_subscription: None,
             bounds_subscription: None,
         };
@@ -634,10 +632,10 @@ impl MainWindow {
     fn render_header(&self, theme: &theme::ThemeColors, cx: &mut Context<Self>) -> Div {
         let can_back = self.history.can_go_back();
         let can_forward = self.history.can_go_forward();
-        let folder_name = self.current_path.file_name()
-            .map(|s| s.to_string_lossy().to_string())
-            .unwrap_or_else(|| "/".to_string());
-
+        let window_width = self.window_size.0 as f32;
+        let location_center = window_width / 2. - theme::SIDEBAR_PANEL_WIDTH - 20.;
+        // Reserve room for the right toolbar cluster before sizing the centered pill.
+        let location_width = (window_width - 920.).clamp(0., 460.);
         let divider = || {
             div()
                 .w(px(1.))
@@ -646,6 +644,7 @@ impl MainWindow {
         };
 
         div()
+            .relative()
             .h(px(TITLE_BAR_HEIGHT))
             .flex_shrink_0()
             .px_3()
@@ -671,61 +670,16 @@ impl MainWindow {
                                     .on_click(cx.listener(|this, _, _, cx| this.go_forward(cx))),
                             ),
                     )
-                    .child(
-                        if self.path_editing {
-                            div()
-                                .id("path-editing-box")
-                                .flex_1()
-                                .min_w(px(280.))
-                                .child(self.render_breadcrumb(theme, cx))
-                        } else {
-                            div()
-                                .id("current-folder-title-pill")
-                                .flex_1()
-                                .min_w_0()
-                                .flex()
-                                .items_center()
-                                .gap_2()
-                                .cursor_pointer()
-                                .hover(|s| s.opacity(0.85))
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.path_editing = true;
-                                    this.path_input_text = this.current_path.to_string_lossy().to_string();
-                                    cx.notify();
-                                }))
-                                .child(
-                                    div()
-                                        .min_w_0()
-                                        .truncate()
-                                        .text_size(px(15.))
-                                        .font_weight(gpui::FontWeight::SEMIBOLD)
-                                        .text_color(theme.text_primary)
-                                        .child(folder_name),
-                                )
-                                .child(
-                                    theme::icon("chevron-down-hi", 11.)
-                                        .flex_shrink_0()
-                                        .text_color(theme.text_faint),
-                                )
-                        }
-                    ),
             )
-            // Center: Animated Search Bar (React / Motion port)
             .child(
-                crate::ui::search_bar::render_search_capsule(
-                    &self.animated_search_bar,
-                    theme,
-                    |this, cx| {
-                        this.animated_search_bar.toggle();
-                        cx.notify();
-                    },
-                    |this, cx| {
-                        this.animated_search_bar.query.clear();
-                        this.animated_search_bar.active_index = 0;
-                        cx.notify();
-                    },
-                    cx,
-                )
+                div().flex_1().min_w_0().max_w(px(460.))
+                    .when(location_width >= 180., |d| {
+                        d.absolute()
+                            .left(px(location_center - location_width / 2.))
+                            .top(px((TITLE_BAR_HEIGHT - theme::BUTTON_HEIGHT) / 2.))
+                            .w(px(location_width))
+                    })
+                    .child(self.render_location_bar(theme, cx)),
             )
             // Right controls cluster: Joint Capsules + Search Bar (matching macOS Finder in Image 2)
             .child(
@@ -825,7 +779,7 @@ impl MainWindow {
             )
     }
 
-    fn render_breadcrumb(&self, theme: &theme::ThemeColors, cx: &mut Context<Self>) -> Div {
+    fn render_location_bar(&self, theme: &theme::ThemeColors, cx: &mut Context<Self>) -> AnyElement {
         if self.path_editing {
             return div()
                 .h(px(theme::BUTTON_HEIGHT))
@@ -842,10 +796,12 @@ impl MainWindow {
                 .child(
                     div()
                         .flex_1()
-                        .text_size(px(theme::TEXT_SMALL))
+                        .text_size(px(self.font_size.max(14.)))
                         .text_color(theme.text_primary)
                         .font_weight(gpui::FontWeight::MEDIUM)
-                        .child(format!("{}|", self.path_input_text)),
+                        .min_w_0()
+                        .truncate()
+                        .child(if self.path_input_text.is_empty() { "Enter a folder path…".to_string() } else { format!("{}|", self.path_input_text) }),
                 )
                 .child(
                     div()
@@ -871,109 +827,49 @@ impl MainWindow {
                             cx.notify();
                         }))
                         .child(theme::icon("cancel-01", 13.).text_color(theme.text_muted)),
-                );
+                ).into_any_element();
         }
-
-        let mut segments = Vec::new();
-        let mut curr = Some(self.current_path.as_path());
-
-        while let Some(p) = curr {
-            if let Some(file_name) = p.file_name() {
-                segments.push((file_name.to_string_lossy().to_string(), p.to_path_buf()));
-            } else if p == Path::new("/") {
-                segments.push(("/".to_string(), p.to_path_buf()));
-            }
-            curr = p.parent();
-        }
-        segments.reverse();
-
-        if segments.is_empty() {
-            segments.push(("/".to_string(), PathBuf::from("/")));
-        }
-
-        let current_path = self.current_path.clone();
 
         div()
+            .id("location-pill")
+            .role(Role::Button)
+            .aria_label("Edit location")
             .h(px(theme::BUTTON_HEIGHT))
-            .px_2()
-            .bg(theme.button_fill)
+            .px_3()
             .rounded_full()
+            .bg(theme.search_fill)
             .border_1()
-            .border_color(theme.button_border)
-            .shadow(theme::control_shadow(theme))
+            .border_color(theme.search_border)
             .flex()
             .items_center()
-            .justify_between()
-            .gap_1()
-            .child(
-                div()
-                    .flex_1()
-                    .flex()
-                    .items_center()
-                    .gap_1()
-                    .overflow_hidden()
-                    .children(segments.into_iter().enumerate().flat_map(|(i, (name, path))| {
-                        let is_last = current_path == path;
-                        let target = path.clone();
-
-                        let pill = div()
-                            .id(ElementId::from(format!("crumb-{}", i)))
-                            .px_2()
-                            .py_0p5()
-                            .rounded_full()
-                            .cursor_pointer()
-                            .when(!is_last, |d| {
-                                d.hover(|s| s.bg(theme.button_hover))
-                            })
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.navigate_to(target.clone(), cx);
-                            }))
-                            .child(
-                                div()
-                                    .text_size(px(theme::TEXT_SMALL))
-                                    .text_color(if is_last { theme.accent } else { theme.text_muted })
-                                    .font_weight(if is_last { gpui::FontWeight::SEMIBOLD } else { gpui::FontWeight::NORMAL })
-                                    .child(name),
-                            )
-                            .into_any_element();
-
-                        let chevron = if !is_last {
-                            Some(
-                                theme::icon("chevron-right", 10.)
-                                    .text_color(theme.text_faint)
-                                    .into_any_element(),
-                            )
-                        } else {
-                            None
-                        };
-
-                        [Some(pill), chevron].into_iter().flatten()
-                    })),
-            )
-            .child(
-                div()
-                    .id("edit-path-btn")
-                    .role(Role::Button)
-                    .cursor_pointer()
-                    .p_1()
-                    .rounded_full()
-                    .hover(|s| s.bg(theme.button_hover))
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.path_editing = true;
-                        this.search_active = false;
-                        this.path_input_text = this.current_path.to_string_lossy().to_string();
-                        cx.notify();
-                    }))
-                    .child(theme::icon("pencil", 13.).text_color(theme.text_muted)),
-            )
+            .gap_2()
+            .cursor_pointer()
+            .hover(|style| style.bg(theme.button_hover))
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.path_editing = true;
+                this.search_active = false;
+                this.path_input_text = this.current_path.to_string_lossy().into_owned();
+                cx.notify();
+            }))
+            .child(icon("hard-drive", 14.).flex_shrink_0().text_color(theme.text_muted))
+            .child(div().flex_1().min_w_0().truncate()
+                .text_size(px(self.font_size.max(14.)))
+                .text_color(theme.text_primary)
+                .child(self.current_path.to_string_lossy().into_owned()))
+            .child(icon("pencil", 13.).flex_shrink_0().text_color(theme.text_muted))
+            .into_any_element()
     }
 
-    fn render_settings_modal(&self, theme: &theme::ThemeColors, cx: &mut Context<Self>) -> AnyElement {
+    fn render_settings_modal(
+        &self,
+        theme: &theme::ThemeColors,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         div()
             .id("settings-modal-backdrop")
             .absolute()
             .inset_0()
-            .bg(if theme.is_dark { gpui::rgba(0x00000030) } else { gpui::rgba(0x00000014) })
+            .bg(gpui::rgba(0x00000055))
             .flex()
             .items_center()
             .justify_center()
@@ -2579,7 +2475,7 @@ impl MainWindow {
             .child(theme::glass_specular_sheen(theme))
             .with_animation(
                 ("command-palette-width-spring", search_epoch),
-                crate::ui::search_bar::SPRING_SILKY.into_animation(340),
+                crate::ui::spring::SPRING_SILKY.into_animation(340),
                 move |card_div, progress| {
                     let w = if search_epoch == 0 {
                         if has_query { 780.0 } else { 470.0 }
@@ -3722,14 +3618,6 @@ impl Render for MainWindow {
                 let key = ev.keystroke.key.as_str();
                 let modifiers = ev.keystroke.modifiers;
 
-                // 0a. Animated Search Bar Mode
-                if this.animated_search_bar.is_open {
-                    if this.animated_search_bar.handle_key(key) {
-                        cx.notify();
-                        return;
-                    }
-                }
-
                 // 0. Command Palette Mode
                 if this.show_command_palette {
                     let items = this.get_palette_items();
@@ -3921,27 +3809,6 @@ impl Render for MainWindow {
             })
             .when(self.show_command_palette, |d| {
                 d.child(self.render_command_palette(&theme, cx))
-            })
-            .when(self.animated_search_bar.is_open, |d| {
-                d.child(crate::ui::search_bar::render_search_popover(
-                    &self.animated_search_bar,
-                    &theme,
-                    |this, cx| {
-                        this.animated_search_bar.close();
-                        cx.notify();
-                    },
-                    |this, code, name, cx| {
-                        this.animated_search_bar.selected_code = code.to_string();
-                        this.animated_search_bar.query = name.to_string();
-                        this.animated_search_bar.close();
-                        cx.notify();
-                    },
-                    |this, idx, cx| {
-                        this.animated_search_bar.set_active_index(idx);
-                        cx.notify();
-                    },
-                    cx,
-                ))
             })
             // 8 edge / corner interactive resize handles for Wayland/X11
             .child(

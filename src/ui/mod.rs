@@ -1,6 +1,6 @@
 //! User interface module for Shark GPUI.
 
-pub mod search_bar;
+mod spring;
 pub mod window;
 
 pub use window::{MainWindow, SortBy, ViewMode};
