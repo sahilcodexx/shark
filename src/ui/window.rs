@@ -113,6 +113,9 @@ pub struct MainWindow {
     pub filtered_indices: Vec<usize>,
     pub search_query: String,
     pub selected_index: Option<usize>,
+    tags: std::collections::BTreeMap<PathBuf, Vec<String>>,
+    active_tag: Option<&'static str>,
+    scan_error: Option<String>,
     pub view_mode: ViewMode,
     pub sort_by: SortBy,
     pub sort_reversed: bool,
@@ -198,6 +201,9 @@ impl MainWindow {
             filtered_indices: Vec::new(),
             search_query: String::new(),
             selected_index: None,
+            tags: cfg.tags,
+            active_tag: None,
+            scan_error: None,
             view_mode: ViewMode::Grid,
             sort_by: SortBy::Name,
             sort_reversed: false,
@@ -264,6 +270,8 @@ impl MainWindow {
         self.history.navigate_to(path.clone());
         self.current_path = path.clone();
         self.selected_index = None;
+        self.active_tag = None;
+        self.scan_error = None;
         self.search_query.clear();
         self.show_filter_menu = false;
         self.show_more_menu = false;
@@ -312,6 +320,7 @@ impl MainWindow {
                 // Check messages from scanner
                 let mut batches = Vec::new();
                 let mut completed = None;
+                let mut error = None;
 
                 let should_continue = this.update(cx, |win, _| {
                     if let Some(ref rx) = win.scan_receiver {
@@ -321,7 +330,7 @@ impl MainWindow {
                                 ScanMessage::Completed { total_items, total_bytes } => {
                                     completed = Some((total_items, total_bytes));
                                 }
-                                ScanMessage::Error(_) => {}
+                                ScanMessage::Error(message) => error = Some(message),
                             }
                         }
                     }
@@ -332,8 +341,10 @@ impl MainWindow {
                     break;
                 }
 
-                if !batches.is_empty() || completed.is_some() {
+                let finished = completed.is_some() || error.is_some();
+                if !batches.is_empty() || finished {
                     let _ = this.update(cx, |win, cx| {
+                        win.scan_error = error;
                         for batch in batches {
                             win.entries.extend(batch);
                         }
@@ -353,7 +364,7 @@ impl MainWindow {
                     });
                 }
 
-                if completed.is_some() {
+                if finished {
                     break;
                 }
 
@@ -396,6 +407,12 @@ impl MainWindow {
                 continue;
             }
             if !q.is_empty() && !e.name_lower.contains(&q) {
+                continue;
+            }
+
+            if let Some(tag) = self.active_tag
+                && !self.tags.get(&e.path).is_some_and(|tags| tags.iter().any(|value| value == tag))
+            {
                 continue;
             }
 
@@ -3221,23 +3238,21 @@ impl MainWindow {
 
     fn render_sidebar(&self, theme: &theme::ThemeColors, cx: &mut Context<Self>) -> Div {
         let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
-        let favorites = vec![
-            ("place-recents", "Recents", "clock", home.clone()),
-            ("place-applications", "Applications", "app-window", PathBuf::from("/usr/share/applications")),
-            ("place-desktop", "Desktop", "app-window", home.join("Desktop")),
-            ("place-documents", "Documents", "document", home.join("Documents")),
-            ("place-downloads", "Downloads", "download", home.join("Downloads")),
-            ("place-music", "Music", "audio", home.join("Music")),
-            ("place-pictures", "Pictures", "image", home.join("Pictures")),
-            ("place-videos", "Videos", "video", home.join("Videos")),
-        ];
+        let favorites: Vec<_> = [
+            ("place-desktop", "Desktop", "app-window", dirs::desktop_dir()),
+            ("place-documents", "Documents", "document", dirs::document_dir()),
+            ("place-downloads", "Downloads", "download", dirs::download_dir()),
+            ("place-music", "Music", "audio", dirs::audio_dir()),
+            ("place-pictures", "Pictures", "image", dirs::picture_dir()),
+            ("place-videos", "Videos", "video", dirs::video_dir()),
+        ].into_iter().filter_map(|(id, label, icon, path)| {
+            path.filter(|path| path != &home && path.is_dir()).map(|path| (id, label, icon, path))
+        }).collect();
 
         let mut locations = vec![
-            ("loc-cloud", "iCloud Drive", "cloud", home.join("Documents")),
-            ("loc-user", "User Home", "user", home.clone()),
-            ("loc-root", "Macintosh HD", "hard-drive", PathBuf::from("/")),
+            ("loc-user", "Home", "user", home),
+            ("loc-root", "File System", "hard-drive", PathBuf::from("/")),
         ];
-
         if let Some(data_dir) = dirs::data_local_dir() {
             locations.push(("place-trash", "Trash", "trash", data_dir.join("Trash/files")));
         }
@@ -3259,7 +3274,7 @@ impl MainWindow {
             .bg(theme.sidebar)
             .rounded(px(RADIUS_SIDEBAR))
             .border_1()
-            .border_color(theme.surface_border)
+            .border_color(theme.sidebar_border)
             .shadow(theme::floating_panel_shadows(theme))
             .overflow_hidden()
             .flex()
@@ -3277,7 +3292,9 @@ impl MainWindow {
                     .flex()
                     .flex_col()
                     .gap_4()
-                    .child(self.render_sidebar_section("Favorites", favorites, theme, cx))
+                    .when(!favorites.is_empty(), |sidebar| {
+                        sidebar.child(self.render_sidebar_section("Favorites", favorites, theme, cx))
+                    })
                     .child(self.render_sidebar_section("Locations", locations, theme, cx))
                     .child(self.render_sidebar_tags_section("Tags", tags, theme, cx)),
             )
@@ -3302,7 +3319,7 @@ impl MainWindow {
                     .items_center()
                     .text_size(px(theme::TEXT_CAPTION))
                     .font_weight(gpui::FontWeight::MEDIUM)
-                    .text_color(theme.text_faint)
+                    .text_color(theme.text_muted)
                     .child(title),
             )
             .children(items.into_iter().map(|(id, label, icon_name, path)| {
@@ -3360,70 +3377,54 @@ impl MainWindow {
                     .items_center()
                     .text_size(px(theme::TEXT_CAPTION))
                     .font_weight(gpui::FontWeight::MEDIUM)
-                    .text_color(theme.text_faint)
+                    .text_color(theme.text_muted)
                     .child(title),
             )
             .children(tags.into_iter().map(|(id, label, color)| {
+                let has_tag = self.selected_index.and_then(|i| self.entry_at(i))
+                    .and_then(|entry| self.tags.get(&entry.path))
+                    .is_some_and(|tags| tags.iter().any(|tag| tag == label));
                 div()
-                    .id(ElementId::from(id))
                     .h(px(theme::SIDEBAR_ROW_HEIGHT))
-                    .px_2()
                     .rounded(px(6.))
                     .flex()
                     .items_center()
-                    .gap_2()
-                    .cursor_pointer()
-                    .hover(|s| s.bg(theme.sidebar_hover))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.search_query = label.to_lowercase();
-                        this.sort_and_filter();
-                        cx.notify();
-                    }))
+                    .when(self.active_tag == Some(label), |row| row.bg(theme.sidebar_selected))
                     .child(
-                        div()
-                            .size(px(10.))
-                            .rounded_full()
-                            .bg(color)
-                            .border_1()
-                            .border_color(gpui::rgba(0x00000022)),
+                        div().id(id).role(Role::Button).flex_1().h_full().px_2()
+                            .rounded(px(6.)).flex().items_center().gap_2().cursor_pointer()
+                            .hover(|style| style.bg(theme.sidebar_hover))
+                            .aria_label(format!("Filter this folder by {label}"))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.active_tag = (this.active_tag != Some(label)).then_some(label);
+                                this.selected_index = None;
+                                this.scroll_handle = UniformListScrollHandle::new();
+                                this.sort_and_filter();
+                                cx.notify();
+                            }))
+                            .child(div().size(px(10.)).rounded_full().bg(color))
+                            .child(div().text_size(px(theme::TEXT_BODY)).text_color(theme.text_primary).child(label)),
                     )
-                    .child(
-                        div()
-                            .text_size(px(theme::TEXT_BODY))
-                            .text_color(theme.text_muted)
-                            .child(label),
-                    )
+                    .when(self.selected_index.and_then(|i| self.entry_at(i)).is_some_and(|entry| entry.path.to_str().is_some()), |row| {
+                        row.child(
+                            icon_button(SharedString::from(format!("assign-{id}")), if has_tag { "check-hi" } else { "add-01" }, has_tag, true)
+                                .size(px(24.))
+                                .aria_label(format!("{} {label} tag", if has_tag { "Remove" } else { "Add" }))
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    let Some(path) = this.selected_index.and_then(|i| this.entry_at(i)).map(|entry| entry.path.clone()) else { return; };
+                                    // shortcut: tags are stored by path, migrate to file identity when tracking moves.
+                                    let mut config = crate::config::Config::load();
+                                    config.toggle_tag(&path, label);
+                                    config.save();
+                                    this.tags = config.tags;
+                                    this.sort_and_filter();
+                                    this.selected_index = this.filtered_indices.iter()
+                                        .position(|&index| this.entries[index].path == path);
+                                    cx.notify();
+                                })),
+                        )
+                    })
             }))
-            .child(
-                div()
-                    .id("tag-all")
-                    .h(px(theme::SIDEBAR_ROW_HEIGHT))
-                    .px_2()
-                    .rounded(px(6.))
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .cursor_pointer()
-                    .hover(|s| s.bg(theme.sidebar_hover))
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.search_query.clear();
-                        this.sort_and_filter();
-                        cx.notify();
-                    }))
-                    .child(
-                        div()
-                            .size(px(10.))
-                            .rounded_full()
-                            .border_1()
-                            .border_color(theme.text_faint),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(theme::TEXT_BODY))
-                            .text_color(theme.text_faint)
-                            .child("All Tags..."),
-                    ),
-            )
     }
 
     fn render_pane(&mut self, theme: &theme::ThemeColors, cx: &mut Context<Self>) -> AnyElement {
@@ -3436,7 +3437,7 @@ impl MainWindow {
                 .justify_center()
                 .text_color(theme.text_faint)
                 .text_size(px(theme::TEXT_BODY))
-                .child("This folder is empty")
+                .child(if let Some(error) = &self.scan_error { format!("Could not open folder: {error}") } else if self.active_tag.is_some() { "No files with this tag in this folder".to_owned() } else { "This folder is empty".to_owned() })
                 .into_any_element();
         }
 

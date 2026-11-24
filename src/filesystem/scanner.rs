@@ -41,6 +41,13 @@ pub fn scan_directory_async(
             dir
         };
 
+        if dirs::data_local_dir().is_some_and(|data| dir_to_scan == data.join("Trash/files"))
+            && matches!(std::fs::symlink_metadata(&dir_to_scan), Err(error) if error.kind() == std::io::ErrorKind::NotFound)
+        {
+            let _ = sender.send(ScanMessage::Completed { total_items: 0, total_bytes: 0 });
+            return;
+        }
+
         if let Err(e) = scan_with_native_fs(&dir_to_scan, &cancellable, &sender) {
             let _ = sender.send(ScanMessage::Error(e.to_string()));
         }

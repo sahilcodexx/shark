@@ -19,6 +19,8 @@ pub struct Config {
     pub sort_reversed: bool,
     /// User bookmarks
     pub bookmarks: Vec<PathBuf>,
+    #[serde(default)]
+    pub tags: std::collections::BTreeMap<PathBuf, Vec<String>>,
     /// Window default width
     pub window_width: i32,
     /// Window default height
@@ -67,6 +69,7 @@ impl Default for Config {
             sort_by: "name".to_string(),
             sort_reversed: false,
             bookmarks: default_bookmarks,
+            tags: Default::default(),
             window_width: 1024,
             window_height: 700,
             background_mode: "frosted".to_string(),
@@ -114,6 +117,18 @@ impl Config {
                 return dir.clone();
             }
         dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"))
+    }
+
+    pub fn toggle_tag(&mut self, path: &Path, label: &str) {
+        let tags = self.tags.entry(path.to_path_buf()).or_default();
+        if let Some(index) = tags.iter().position(|tag| tag == label) {
+            tags.remove(index);
+        } else {
+            tags.push(label.to_owned());
+        }
+        if tags.is_empty() {
+            self.tags.remove(path);
+        }
     }
 
     /// Add a path to bookmarks if not already present.

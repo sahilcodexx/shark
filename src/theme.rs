@@ -135,8 +135,8 @@ impl ThemeColors {
                 card: gpui::rgba(0x1e212deb).into(),
                 card_border: gpui::rgba(0xffffff22).into(),
                 card_hover: gpui::rgba(0xffffff15).into(),
-                sidebar: gpui::rgba(0x181b26a0).into(), // ~63% translucent floating sidebar
-                sidebar_border: gpui::rgba(0xffffff1c).into(),
+                sidebar: gpui::rgba(0x31384bd0).into(), // Tinted glass stays distinct from the dark canvas
+                sidebar_border: gpui::rgba(0xffffff32).into(),
                 topbar: gpui::rgba(0x22222a00).into(),
                 topbar_border: gpui::rgba(0xffffff18).into(),
                 text_primary: rgb(0xf5f5f7).into(),

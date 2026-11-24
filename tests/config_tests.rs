@@ -28,3 +28,22 @@ fn test_config_bookmarks() {
     config.remove_bookmark(&sample);
     assert!(!config.bookmarks.contains(&sample));
 }
+
+#[test]
+fn tags_round_trip_and_toggle_independently_of_filename() {
+    let mut config = Config::default();
+    let path = std::path::Path::new("/tmp/report.txt");
+    config.toggle_tag(path, "Important");
+    config.toggle_tag(path, "Work");
+
+    let json = serde_json::to_value(&config).unwrap();
+    let mut restored: Config = serde_json::from_value(json.clone()).unwrap();
+    restored.toggle_tag(path, "Important");
+    assert_eq!(restored.tags.get(path).unwrap(), &["Work"]);
+    restored.toggle_tag(path, "Work");
+    assert!(restored.tags.is_empty());
+
+    let mut old = json;
+    old.as_object_mut().unwrap().remove("tags");
+    assert!(serde_json::from_value::<Config>(old).unwrap().tags.is_empty());
+}
