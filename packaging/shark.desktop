@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Shark
+GenericName=File Manager
+Comment=Browse and manage files
+Exec=shark %f
+Icon=shark
+Terminal=false
+Categories=System;FileTools;FileManager;
+StartupWMClass=shark
