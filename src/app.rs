@@ -32,6 +32,14 @@ impl SharkApp {
 
             let is_frosted = config.background_mode != "solid";
 
+            let icon = image::load_from_memory_with_format(
+                include_bytes!("../assets/icons/shark.png"),
+                image::ImageFormat::Png,
+            )
+            .map(|image| std::sync::Arc::new(image.thumbnail(128, 128).into_rgba8()))
+            .inspect_err(|error| log::warn!("Could not decode the Shark window icon: {error}"))
+            .ok();
+
             let options = WindowOptions {
                 window_bounds: Some(bounds),
                 window_min_size: Some(size(px(320.), px(240.))),
@@ -41,6 +49,7 @@ impl SharkApp {
                     WindowBackgroundAppearance::Opaque
                 },
                 app_id: Some("shark".into()),
+                icon,
                 titlebar: Some(TitlebarOptions {
                     title: Some("Shark".into()),
                     appears_transparent: true,
@@ -51,7 +60,6 @@ impl SharkApp {
             };
 
             cx.open_window(options, move |window, cx| {
-                window.set_app_id("shark");
                 let coordinator = if is_frosted {
                     let c = crate::platform::PlatformBlurCoordinator::try_init(
                         window,
