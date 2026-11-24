@@ -1,0 +1,75 @@
+name: Build AppImage
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Release tag to upload AppImage to (optional)'
+        required: false
+        default: ''
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  appimage:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libwayland-dev libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev desktop-file-utils imagemagick
+
+      - name: Build Shark
+        run: |
+          rustup toolchain install stable --profile minimal
+          cargo +stable build --locked --release
+
+      - name: Package AppImage
+        shell: bash
+        run: |
+          desktop-file-validate packaging/shark.desktop
+          appdir="$RUNNER_TEMP/Shark.AppDir"
+          install -Dm755 target/release/shark "$appdir/usr/bin/shark"
+          install -Dm755 packaging/AppRun "$appdir/AppRun"
+          install -Dm644 packaging/shark.desktop "$appdir/usr/share/applications/shark.desktop"
+          install -Dm644 assets/icons/shark.svg "$appdir/usr/share/icons/hicolor/scalable/apps/shark.svg"
+          mkdir -p "$appdir/usr/share/icons/hicolor/256x256/apps"
+          convert assets/icons/shark.png -resize 256x256 "$appdir/usr/share/icons/hicolor/256x256/apps/shark.png"
+          ln -s usr/share/applications/shark.desktop "$appdir/shark.desktop"
+          ln -s usr/share/icons/hicolor/256x256/apps/shark.png "$appdir/shark.png"
+          ln -s shark.png "$appdir/.DirIcon"
+
+          # Keep graphics drivers and glibc on the host. Bundle the XKB libraries
+          # because a Wayland-only desktop may not have the X11 bridge installed.
+          for library in libxkbcommon.so.0 libxkbcommon-x11.so.0 libxcb-xkb.so.1; do
+            source=$(ldconfig -p | awk -v name="$library" '$1 == name && !found++ { print $NF }')
+            test -n "$source"
+            install -Dm755 "$source" "$appdir/usr/lib/$library"
+          done
+
+          tool="$RUNNER_TEMP/appimagetool"
+          curl --fail --silent --show-error --location --retry 3 \
+            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage \
+            --output "$tool"
+          chmod +x "$tool"
+          mkdir -p dist
+          ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 "$tool" "$appdir" dist/Shark-x86_64.AppImage
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Shark-linux-x86_64
+          path: dist/Shark-x86_64.AppImage
+          if-no-files-found: error
+
+      - name: Upload to Release
+        if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ github.event.release.tag_name || inputs.release_tag }}"
+          gh release upload "$TAG" dist/Shark-x86_64.AppImage --clobber

@@ -23,6 +23,34 @@ A fast, lightweight, modern Linux file manager written in Rust using GTK4. Built
 
 See [feature status and remaining work](docs/FEATURE_STATUS.md).
 
+## AppImage
+
+### Local Build
+To package Shark as an AppImage on your local Linux machine:
+
+```bash
+# Build binary in release mode and package into dist/Shark-x86_64.AppImage
+./packaging/build-appimage.sh
+
+# Or skip cargo build if you already compiled target/release/shark:
+./packaging/build-appimage.sh --no-build
+```
+
+The script validates the desktop file, prepares standard icon sizes, bundles compatible XKB runtime libraries, and uses or downloads `appimagetool` automatically.
+
+### GitHub Actions Build
+In GitHub, open **Actions → Build AppImage → Run workflow**. Download the
+`Shark-linux-x86_64` artifact from the run when it finishes. Extract the ZIP
+and make `Shark-x86_64.AppImage` executable before launching it.
+
+### Desktop Integration
+The AppImage includes Shark’s desktop entry and icons. Use your desktop’s
+AppImage integration tool if you want Shark to appear in the application menu.
+For a native install, put `shark` on your PATH, install
+`packaging/shark.desktop` to `${XDG_DATA_HOME:-$HOME/.local/share}/applications`,
+and install `assets/icons/shark.svg` to
+`${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/scalable/apps`.
+
 ## Architecture Overview
 
 ```
