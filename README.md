@@ -43,6 +43,13 @@ In GitHub, open **Actions → Build AppImage → Run workflow**. Download the
 `Shark-linux-x86_64` artifact from the run when it finishes. Extract the ZIP
 and make `Shark-x86_64.AppImage` executable before launching it.
 
+### Updates
+In the Linux x86-64 AppImage, open **Settings → Check for Updates**. Shark
+downloads and verifies the latest AppImage, then replaces the current file.
+Reopen Shark after installation. The updater uses the system `curl` command
+and requires write access to the AppImage’s folder. Download v0.1.1 manually
+if you are upgrading from an earlier version.
+
 ### Desktop Integration
 The AppImage includes Shark’s desktop entry and icons. Use your desktop’s
 AppImage integration tool if you want Shark to appear in the application menu.

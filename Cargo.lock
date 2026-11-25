@@ -4450,7 +4450,7 @@ dependencies = [
 
 [[package]]
 name = "shark"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "ashpd",
  "async-channel",
@@ -4464,8 +4464,11 @@ dependencies = [
  "log",
  "md-5",
  "raw-window-handle",
+ "semver",
  "serde",
  "serde_json",
+ "sha2",
+ "tempfile",
  "wayland-backend",
  "wayland-client",
  "wayland-protocols",

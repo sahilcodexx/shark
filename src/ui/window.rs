@@ -1,5 +1,6 @@
 //! Main application window layout and controller for Shark GPUI.
 
+use super::updater::{self, Update};
 use crate::filesystem::DirectoryCache;
 use crate::filesystem::operations::{open_in_terminal, open_path};
 use crate::filesystem::scanner::{scan_directory_async, ScanMessage};
@@ -118,6 +119,7 @@ pub struct MainWindow {
     pub grid_cols: usize,
     pub show_hidden: bool,
     pub show_settings_modal: bool,
+    update: Update,
     pub show_command_palette: bool,
     pub command_palette_query: String,
     pub command_palette_selected: usize,
@@ -214,6 +216,7 @@ impl MainWindow {
             grid_cols: 8,
             show_hidden: cfg.show_hidden,
             show_settings_modal: false,
+            update: Update::Idle,
             show_command_palette: false,
             command_palette_query: String::new(),
             command_palette_selected: 0,
@@ -960,6 +963,84 @@ impl MainWindow {
             .into_any_element()
     }
 
+    fn check_for_updates(&mut self, cx: &mut Context<Self>) {
+        if self.update.busy() || matches!(self.update, Update::Installed(_)) {
+            return;
+        }
+
+        self.update = Update::Checking;
+        cx.notify();
+        let (tx, rx) = async_channel::unbounded();
+        cx.background_executor()
+            .spawn(async move {
+                let result = updater::run(|progress| {
+                    let _ = tx.send_blocking(progress);
+                });
+                let status = result.unwrap_or_else(|error| {
+                    Update::Failed(format!("Update failed: {error}"))
+                });
+                let _ = tx.send_blocking(status);
+            })
+            .detach();
+        cx.spawn(async move |view, cx| {
+            while let Ok(status) = rx.recv().await {
+                if view.update(cx, |this, cx| {
+                    this.update = status;
+                    cx.notify();
+                }).is_err() {
+                    break;
+                }
+            }
+        }).detach();
+    }
+
+    fn render_update_settings(&self, theme: &theme::ThemeColors, cx: &mut Context<Self>) -> Div {
+        let available = updater::available();
+        let can_check = available && !self.update.busy()
+            && !matches!(self.update, Update::Installed(_));
+        let detail = if !available {
+            "Automatic updates require the Linux x86-64 AppImage".to_string()
+        } else if matches!(self.update, Update::Idle) {
+            "New releases download and install automatically after a check".to_string()
+        } else {
+            self.update.status()
+        };
+        div()
+            .mt_2()
+            .p_4()
+            .rounded(px(10.))
+            .border_1()
+            .border_color(theme.surface_border)
+            .bg(theme.card)
+            .flex()
+            .gap_3()
+            .items_center()
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(
+                        div()
+                            .text_size(px(13.))
+                            .font_weight(gpui::FontWeight::MEDIUM)
+                            .text_color(theme.text_primary)
+                            .child(format!("Shark v{}", updater::VERSION)),
+                    )
+                    .child(div().text_size(px(12.)).text_color(theme.text_muted).child(detail)),
+            )
+            .when(can_check, |row| {
+                row.child(
+                    theme_button("check-for-updates", ButtonLook::Secondary, theme)
+                        .flex_shrink_0()
+                        .child("Check for Updates")
+                        .on_click(cx.listener(|this, _, _, cx| this.check_for_updates(cx))),
+                )
+            })
+    }
+
     fn render_settings_modal(
         &self,
         theme: &theme::ThemeColors,
@@ -1028,6 +1109,7 @@ impl MainWindow {
                             .overflow_y_scroll()
                             .px_5()
                             .pb_5()
+                            .child(self.render_update_settings(theme, cx))
                             .child(
                                 div()
                                     .text_size(px(12.))
@@ -4617,6 +4699,25 @@ impl Render for MainWindow {
                 d.child(self.render_command_palette(&theme, cx))
             })
             .when(self.show_inspector, |d| d.child(self.render_properties(&theme, cx)))
+            .when(!matches!(self.update, Update::Idle | Update::Current), |d| {
+                d.child(
+                    div()
+                        .absolute()
+                        .left(px(18.))
+                        .bottom(px(16.))
+                        .max_w(px(370.))
+                        .px_3()
+                        .py_2()
+                        .rounded(px(8.))
+                        .border_1()
+                        .border_color(theme.surface_border)
+                        .bg(Hsla { a: 1., ..theme.card })
+                        .shadow(theme::floating_panel_shadows(&theme))
+                        .text_size(px(12.))
+                        .text_color(theme.text_primary)
+                        .child(self.update.status()),
+                )
+            })
             // 8 edge / corner interactive resize handles for Wayland/X11
             .child(
                 div()
