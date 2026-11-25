@@ -19,7 +19,7 @@ impl SharkApp {
         app.run(move |cx: &mut App| {
             let config = Config::load();
             let initial_path = folder
-                .or(config.last_directory)
+                .or_else(|| config.last_directory.clone())
                 .unwrap_or_else(|| dirs::home_dir().unwrap_or_else(|| PathBuf::from("/")));
 
             let width = config.window_width as f32;
@@ -60,19 +60,12 @@ impl SharkApp {
             };
 
             cx.open_window(options, move |window, cx| {
-                let coordinator = if is_frosted {
-                    let c = crate::platform::PlatformBlurCoordinator::try_init(
-                        window,
-                        width as i32,
-                        height as i32,
-                    );
-                    log::info!("Platform blur coordinator initialized: {:?}", c.status());
-                    Some(c)
-                } else {
-                    None
-                };
-
-                cx.new(|cx| MainWindow::new(initial_path, coordinator, cx))
+                let view = cx.new(|cx| MainWindow::new(initial_path, config, cx));
+                let weak = view.downgrade();
+                window.on_next_frame(move |window, cx| {
+                    let _ = weak.update(cx, |view, _| view.finish_startup(window));
+                });
+                view
             })
             .expect("Failed to open Shark window");
 

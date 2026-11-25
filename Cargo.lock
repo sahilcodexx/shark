@@ -4452,6 +4452,7 @@ dependencies = [
 name = "shark"
 version = "0.1.0"
 dependencies = [
+ "ashpd",
  "async-channel",
  "chrono",
  "dirs",

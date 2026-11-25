@@ -102,6 +102,50 @@ pub fn open_path(path: &Path) {
         .spawn();
 }
 
+/// Sum the logical size of regular files without following symbolic links.
+pub fn folder_size(path: &Path, cancelled: &AtomicBool) -> std::io::Result<u64> {
+    let mut pending = vec![path.to_path_buf()];
+    let mut bytes = 0u64;
+    while let Some(directory) = pending.pop() {
+        for entry in std::fs::read_dir(directory)? {
+            if cancelled.load(Ordering::Relaxed) {
+                return Err(std::io::Error::from(std::io::ErrorKind::Interrupted));
+            }
+            let entry = entry?;
+            let metadata = entry.metadata()?;
+            if metadata.is_file() {
+                bytes = bytes.saturating_add(metadata.len());
+            } else if metadata.is_dir() {
+                pending.push(entry.path());
+            }
+        }
+    }
+    Ok(bytes)
+}
+
+/// Ask the desktop portal to pick an application for a regular file.
+pub async fn open_file_with(path: &Path) -> Result<(), String> {
+    use ashpd::desktop::{ResponseError, open_uri::OpenFileRequest};
+    use std::os::unix::fs::OpenOptionsExt;
+
+    if !path.is_file() {
+        return Err("Select a regular file to open with another application.".into());
+    }
+    let file = std::fs::OpenOptions::new().read(true).custom_flags(libc::O_NONBLOCK)
+        .open(path).map_err(|error| error.to_string())?;
+    if !file.metadata().is_ok_and(|metadata| metadata.is_file()) {
+        return Err("The selected item is no longer a regular file.".into());
+    }
+    let result = match OpenFileRequest::default().ask(true).send_file(&file).await {
+        Ok(request) => request.response(),
+        Err(error) => Err(error),
+    };
+    match result {
+        Ok(()) | Err(ashpd::Error::Response(ResponseError::Cancelled)) => Ok(()),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
 /// Open path in terminal.
 pub fn open_in_terminal(path: &Path) {
     let folder = if path.is_dir() { path } else { path.parent().unwrap_or(path) };
@@ -152,18 +196,27 @@ pub fn rename_path(src: &Path, new_name: &str) -> Result<PathBuf, String> {
     if new_name.trim().is_empty() {
         return Err("Filename cannot be empty".to_string());
     }
-    if new_name.contains('/') || new_name.contains('\0') {
+    if matches!(new_name, "." | "..") || new_name.contains('/') || new_name.contains('\0') {
         return Err("Filename contains invalid characters".to_string());
     }
 
     let parent = src.parent().ok_or_else(|| "Source has no parent".to_string())?;
     let dst = parent.join(new_name);
 
-    if dst.exists() && dst != src {
-        return Err(format!("An item named '{}' already exists", new_name));
+    if dst == src {
+        return Ok(dst);
     }
 
-    std::fs::rename(src, &dst).map_err(|e| format!("Rename failed: {}", e))?;
+    use std::os::unix::ffi::OsStrExt;
+    let source = std::ffi::CString::new(src.as_os_str().as_bytes()).map_err(|e| e.to_string())?;
+    let target = std::ffi::CString::new(dst.as_os_str().as_bytes()).map_err(|e| e.to_string())?;
+    // Both C strings stay alive for the call. NOREPLACE also protects dangling symlinks.
+    let result = unsafe {
+        libc::renameat2(libc::AT_FDCWD, source.as_ptr(), libc::AT_FDCWD, target.as_ptr(), libc::RENAME_NOREPLACE)
+    };
+    if result != 0 {
+        return Err(format!("Rename failed: {}", std::io::Error::last_os_error()));
+    }
     Ok(dst)
 }
 

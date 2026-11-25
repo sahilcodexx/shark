@@ -4,6 +4,40 @@
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TypeFilter {
+    #[default]
+    All,
+    Folders,
+    Documents,
+    Images,
+    Media,
+    Code,
+    Archives,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DateFilter {
+    #[default]
+    Any,
+    Today,
+    Last7Days,
+    Last30Days,
+    ThisYear,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SizeFilter {
+    #[default]
+    Any,
+    Small,  // < 1 MB
+    Medium, // 1 MB - 100 MB
+    Large,  // > 100 MB
+}
+
 /// Application configuration settings.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -17,6 +51,14 @@ pub struct Config {
     pub sort_by: String,
     /// Sort reversed (descending)
     pub sort_reversed: bool,
+    #[serde(default = "default_folders_first")]
+    pub sort_folders_first: bool,
+    #[serde(default)]
+    pub type_filter: TypeFilter,
+    #[serde(default)]
+    pub date_filter: DateFilter,
+    #[serde(default)]
+    pub size_filter: SizeFilter,
     /// User bookmarks
     pub bookmarks: Vec<PathBuf>,
     #[serde(default)]
@@ -34,6 +76,12 @@ pub struct Config {
     /// Interface font size in pixels (default 14.0)
     #[serde(default = "default_font_size")]
     pub font_size: f32,
+    #[serde(default = "default_zoom")]
+    pub zoom: f32,
+}
+
+fn default_folders_first() -> bool {
+    true
 }
 
 fn default_background_mode() -> String {
@@ -42,6 +90,10 @@ fn default_background_mode() -> String {
 
 fn default_theme() -> String {
     "system".to_string()
+}
+
+fn default_zoom() -> f32 {
+    110.
 }
 
 fn default_font_size() -> f32 {
@@ -68,6 +120,10 @@ impl Default for Config {
             view_mode: "grid".to_string(),
             sort_by: "name".to_string(),
             sort_reversed: false,
+            sort_folders_first: true,
+            type_filter: TypeFilter::default(),
+            date_filter: DateFilter::default(),
+            size_filter: SizeFilter::default(),
             bookmarks: default_bookmarks,
             tags: Default::default(),
             window_width: 1024,
@@ -75,6 +131,7 @@ impl Default for Config {
             background_mode: "frosted".to_string(),
             theme: "system".to_string(),
             font_size: 14.0,
+            zoom: default_zoom(),
         }
     }
 }

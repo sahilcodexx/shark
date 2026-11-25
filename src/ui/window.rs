@@ -7,7 +7,7 @@ use crate::models::file_entry::FileEntry;
 use crate::navigation::history::NavigationHistory;
 use crate::theme::{
     self, button, icon, icon_button, macos_segmented_item, macos_segmented_track, theme_button, theme_chip,
-    ButtonLook, RADIUS_CARD, RADIUS_ROW, RADIUS_SIDEBAR, RADIUS_THUMB, TITLE_BAR_HEIGHT,
+    ButtonLook, RADIUS_ROW, RADIUS_SIDEBAR, RADIUS_THUMB, TITLE_BAR_HEIGHT,
 };
 use crate::thumbnails::ThumbnailCache;
 use gpui::{
@@ -60,33 +60,7 @@ pub struct PaletteItem {
     pub action: PaletteAction,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TypeFilter {
-    All,
-    Folders,
-    Documents,
-    Images,
-    Media,
-    Code,
-    Archives,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DateFilter {
-    Any,
-    Today,
-    Last7Days,
-    Last30Days,
-    ThisYear,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SizeFilter {
-    Any,
-    Small,  // < 1 MB
-    Medium, // 1 MB - 100 MB
-    Large,  // > 100 MB
-}
+pub use crate::config::{DateFilter, SizeFilter, TypeFilter};
 
 #[derive(Clone, Debug)]
 pub enum PaletteAction {
@@ -113,6 +87,7 @@ pub struct MainWindow {
     pub filtered_indices: Vec<usize>,
     pub search_query: String,
     pub selected_index: Option<usize>,
+    context_menu: Option<(PathBuf, gpui::Point<gpui::Pixels>)>,
     tags: std::collections::BTreeMap<PathBuf, Vec<String>>,
     active_tag: Option<&'static str>,
     scan_error: Option<String>,
@@ -128,6 +103,9 @@ pub struct MainWindow {
     pub enable_thumbnails: bool,
     pub confirm_delete: bool,
     pub show_inspector: bool,
+    properties_entry: Option<FileEntry>,
+    properties_size: Option<std::io::Result<u64>>,
+    properties_cancel: Arc<AtomicBool>,
     pub zoom: f32,
     pub scroll_handle: UniformListScrollHandle,
     pub thumbnails: ThumbnailCache,
@@ -147,6 +125,7 @@ pub struct MainWindow {
     pub command_palette_search_epoch: usize,
     pub search_active: bool,
     pub path_editing: bool,
+    rename_target: Option<PathBuf>,
     pub path_input_text: String,
     pub theme_mode: theme::ThemeMode,
     pub active_theme: theme::ThemeColors,
@@ -161,13 +140,12 @@ pub struct MainWindow {
 impl MainWindow {
     pub fn new(
         initial_path: PathBuf,
-        blur_coordinator: Option<crate::platform::PlatformBlurCoordinator>,
+        cfg: crate::config::Config,
         cx: &mut Context<Self>,
     ) -> Self {
         let cancellable = Arc::new(AtomicBool::new(false));
         let history = NavigationHistory::new(initial_path.clone());
         let dir_cache = DirectoryCache::new();
-        dir_cache.warm_favorites();
 
         let thumbnails = ThumbnailCache::new();
         let thumb_rx = thumbnails.ready_receiver();
@@ -182,7 +160,6 @@ impl MainWindow {
         })
         .detach();
 
-        let cfg = crate::config::Config::load();
         let is_frosted = cfg.background_mode != "solid";
         let theme_mode = match cfg.theme.as_str() {
             "light" => theme::ThemeMode::Light,
@@ -201,22 +178,31 @@ impl MainWindow {
             filtered_indices: Vec::new(),
             search_query: String::new(),
             selected_index: None,
+            context_menu: None,
             tags: cfg.tags,
             active_tag: None,
             scan_error: None,
-            view_mode: ViewMode::Grid,
-            sort_by: SortBy::Name,
-            sort_reversed: false,
-            sort_folders_first: true,
-            type_filter: TypeFilter::All,
-            date_filter: DateFilter::Any,
-            size_filter: SizeFilter::Any,
+            view_mode: if cfg.view_mode == "list" { ViewMode::List } else { ViewMode::Grid },
+            sort_by: match cfg.sort_by.as_str() {
+                "size" => SortBy::Size,
+                "modified" => SortBy::Modified,
+                "type" => SortBy::Type,
+                _ => SortBy::Name,
+            },
+            sort_reversed: cfg.sort_reversed,
+            sort_folders_first: cfg.sort_folders_first,
+            type_filter: cfg.type_filter,
+            date_filter: cfg.date_filter,
+            size_filter: cfg.size_filter,
             show_filter_menu: false,
             show_more_menu: false,
             enable_thumbnails: true,
             confirm_delete: true,
             show_inspector: false,
-            zoom: 110.,
+            properties_entry: None,
+            properties_size: None,
+            properties_cancel: Arc::new(AtomicBool::new(false)),
+            zoom: cfg.zoom.clamp(60., 300.),
             scroll_handle: UniformListScrollHandle::new(),
             thumbnails,
             dir_cache,
@@ -226,7 +212,7 @@ impl MainWindow {
             total_bytes: 0,
             focus_handle: cx.focus_handle(),
             grid_cols: 8,
-            show_hidden: false,
+            show_hidden: cfg.show_hidden,
             show_settings_modal: false,
             show_command_palette: false,
             command_palette_query: String::new(),
@@ -235,12 +221,13 @@ impl MainWindow {
             command_palette_search_epoch: 0,
             search_active: false,
             path_editing: false,
+            rename_target: None,
             path_input_text: String::new(),
             theme_mode,
             active_theme: initial_theme,
             font_size: cfg.font_size,
             background_mode: cfg.background_mode.clone(),
-            blur_coordinator,
+            blur_coordinator: None,
             window_size: (cfg.window_width, cfg.window_height),
             appearance_subscription: None,
             bounds_subscription: None,
@@ -248,6 +235,16 @@ impl MainWindow {
 
         win.navigate_to(initial_path, cx);
         win
+    }
+
+    pub(crate) fn finish_startup(&mut self, window: &Window) {
+        if self.background_mode != "solid" {
+            let (width, height) = self.window_size;
+            let coordinator = crate::platform::PlatformBlurCoordinator::try_init(window, width, height);
+            log::debug!("Shark blur backend: {:?}", coordinator.status());
+            self.blur_coordinator = Some(coordinator);
+        }
+        self.dir_cache.warm_favorites();
     }
 
     #[inline]
@@ -270,6 +267,10 @@ impl MainWindow {
         self.history.navigate_to(path.clone());
         self.current_path = path.clone();
         self.selected_index = None;
+        self.context_menu = None;
+        self.close_properties();
+        self.path_editing = false;
+        self.rename_target = None;
         self.active_tag = None;
         self.scan_error = None;
         self.search_query.clear();
@@ -387,7 +388,13 @@ impl MainWindow {
         self.type_filter = TypeFilter::All;
         self.date_filter = DateFilter::Any;
         self.size_filter = SizeFilter::Any;
+        self.filters_changed(cx);
+    }
+
+    fn filters_changed(&mut self, cx: &mut Context<Self>) {
+        self.selected_index = None;
         self.sort_and_filter();
+        self.save_config();
         cx.notify();
     }
 
@@ -520,7 +527,26 @@ impl MainWindow {
         });
     }
 
-    pub fn commit_path_input(&mut self, cx: &mut Context<Self>) {
+    pub fn commit_path_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(path) = self.rename_target.as_ref() {
+            match crate::filesystem::operations::rename_path(path, &self.path_input_text) {
+                Ok(_) => {
+                    self.rename_target = None;
+                    self.path_editing = false;
+                    self.refresh(cx);
+                }
+                Err(error) => {
+                    drop(window.prompt(
+                        gpui::PromptLevel::Warning,
+                        "Could not rename item",
+                        Some(&error),
+                        &["ok"],
+                        cx,
+                    ));
+                }
+            }
+            return;
+        }
         let raw = self.path_input_text.trim();
         let expanded = if raw.starts_with("~/") || raw == "~" {
             if let Some(home) = dirs::home_dir() {
@@ -600,12 +626,48 @@ impl MainWindow {
 
     pub fn set_view_mode(&mut self, mode: ViewMode, cx: &mut Context<Self>) {
         self.view_mode = mode;
+        self.save_config();
         cx.notify();
     }
 
     pub fn toggle_inspector(&mut self, cx: &mut Context<Self>) {
-        self.show_inspector = !self.show_inspector;
+        if self.show_inspector {
+            self.close_properties();
+        } else {
+            self.show_inspector = true;
+            self.properties_size = None;
+            self.properties_entry = self
+                .selected_index
+                .and_then(|index| self.entry_at(index))
+                .cloned()
+                .or_else(|| FileEntry::from_path(&self.current_path).ok());
+            let entry = self.properties_entry.as_ref();
+            if entry.is_none_or(|entry| entry.is_directory) {
+                let path = entry.map_or_else(|| self.current_path.clone(), |entry| entry.path.clone());
+                let cancel = Arc::new(AtomicBool::new(false));
+                self.properties_cancel = cancel.clone();
+                let worker_cancel = cancel.clone();
+                let task = cx.background_executor().spawn(async move {
+                    crate::filesystem::operations::folder_size(&path, &worker_cancel)
+                });
+                cx.spawn(async move |view, cx| {
+                    let size = task.await;
+                    if !cancel.load(Ordering::Relaxed) {
+                        let _ = view.update(cx, |this, cx| {
+                            this.properties_size = Some(size);
+                            cx.notify();
+                        });
+                    }
+                }).detach();
+            }
+        }
         cx.notify();
+    }
+
+    fn close_properties(&mut self) {
+        self.show_inspector = false;
+        self.properties_entry = None;
+        self.properties_cancel.store(true, Ordering::Relaxed);
     }
 
     pub fn toggle_sort(&mut self, column: SortBy, cx: &mut Context<Self>) {
@@ -615,18 +677,24 @@ impl MainWindow {
             self.sort_by = column;
             self.sort_reversed = false;
         }
-        self.sort_and_filter();
-        cx.notify();
+        self.filters_changed(cx);
     }
 
     pub fn zoom_in(&mut self, cx: &mut Context<Self>) {
-        self.zoom = (self.zoom + 20.).min(300.);
-        cx.notify();
+        self.set_zoom(self.zoom + 20., cx);
     }
 
     pub fn zoom_out(&mut self, cx: &mut Context<Self>) {
-        self.zoom = (self.zoom - 20.).max(60.);
-        cx.notify();
+        self.set_zoom(self.zoom - 20., cx);
+    }
+
+    fn set_zoom(&mut self, zoom: f32, cx: &mut Context<Self>) {
+        let zoom = zoom.clamp(60., 300.);
+        if self.zoom != zoom {
+            self.zoom = zoom;
+            self.save_config();
+            cx.notify();
+        }
     }
 
     pub fn save_config(&self) {
@@ -643,7 +711,12 @@ impl MainWindow {
             SortBy::Type => "type",
         }.to_string();
         config.sort_reversed = self.sort_reversed;
+        config.sort_folders_first = self.sort_folders_first;
+        config.type_filter = self.type_filter;
+        config.date_filter = self.date_filter;
+        config.size_filter = self.size_filter;
         config.font_size = self.font_size;
+        config.zoom = self.zoom;
         config.background_mode = self.background_mode.clone();
         config.save();
     }
@@ -816,7 +889,8 @@ impl MainWindow {
                 .flex()
                 .items_center()
                 .gap_2()
-                .child(theme::icon("hard-drive", 14.).text_color(theme.accent))
+                .child(theme::icon(if self.rename_target.is_some() { "pencil" } else { "hard-drive" }, 14.).text_color(theme.accent))
+                .when(self.rename_target.is_some(), |bar| bar.child(div().text_size(px(12.)).text_color(theme.text_muted).child("Rename")))
                 .child(
                     div()
                         .flex_1()
@@ -835,7 +909,7 @@ impl MainWindow {
                         .p_1()
                         .rounded_full()
                         .hover(|s| s.bg(theme.button_hover))
-                        .on_click(cx.listener(|this, _, _, cx| this.commit_path_input(cx)))
+                        .on_click(cx.listener(|this, _, window, cx| this.commit_path_input(window, cx)))
                         .child(theme::icon("check-hi", 13.).text_color(theme.accent)),
                 )
                 .child(
@@ -848,6 +922,7 @@ impl MainWindow {
                         .hover(|s| s.bg(theme.button_hover))
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.path_editing = false;
+                            this.rename_target = None;
                             cx.notify();
                         }))
                         .child(theme::icon("cancel-01", 13.).text_color(theme.text_muted)),
@@ -871,6 +946,7 @@ impl MainWindow {
             .hover(|style| style.bg(theme.button_hover))
             .on_click(cx.listener(|this, _, _, cx| {
                 this.path_editing = true;
+                this.rename_target = None;
                 this.search_active = false;
                 this.path_input_text = this.current_path.to_string_lossy().into_owned();
                 cx.notify();
@@ -1094,8 +1170,7 @@ impl MainWindow {
                                                     )
                                                     .rounded(px(5.))
                                                     .on_click(cx.listener(|this, _, _, cx| {
-                                                        this.zoom = 80.;
-                                                        cx.notify();
+                                                        this.set_zoom(80., cx);
                                                     }))
                                                     .child("S"),
                                                 )
@@ -1107,8 +1182,7 @@ impl MainWindow {
                                                     )
                                                     .rounded(px(5.))
                                                     .on_click(cx.listener(|this, _, _, cx| {
-                                                        this.zoom = 120.;
-                                                        cx.notify();
+                                                        this.set_zoom(120., cx);
                                                     }))
                                                     .child("M"),
                                                 )
@@ -1120,8 +1194,7 @@ impl MainWindow {
                                                     )
                                                     .rounded(px(5.))
                                                     .on_click(cx.listener(|this, _, _, cx| {
-                                                        this.zoom = 180.;
-                                                        cx.notify();
+                                                        this.set_zoom(180., cx);
                                                     }))
                                                     .child("L"),
                                                 )
@@ -1133,8 +1206,7 @@ impl MainWindow {
                                                     )
                                                     .rounded(px(5.))
                                                     .on_click(cx.listener(|this, _, _, cx| {
-                                                        this.zoom = 250.;
-                                                        cx.notify();
+                                                        this.set_zoom(250., cx);
                                                     }))
                                                     .child("XL"),
                                                 ),
@@ -1641,8 +1713,7 @@ impl MainWindow {
                                         theme_chip("sort-direction", self.sort_reversed, theme)
                                             .on_click(cx.listener(|this, _, _, cx| {
                                                 this.sort_reversed = !this.sort_reversed;
-                                                this.sort_and_filter();
-                                                cx.notify();
+                                                this.filters_changed(cx);
                                             }))
                                             .child(if self.sort_reversed { "Descending ↓" } else { "Ascending ↑" }),
                                     ),
@@ -1670,37 +1741,37 @@ impl MainWindow {
                                     .gap_1p5()
                                     .child(
                                         theme_chip("f-type-all", self.type_filter == TypeFilter::All, theme)
-                                            .on_click(cx.listener(|this, _, _, cx| { this.type_filter = TypeFilter::All; this.sort_and_filter(); cx.notify(); }))
+                                            .on_click(cx.listener(|this, _, _, cx| { this.type_filter = TypeFilter::All; this.filters_changed(cx); }))
                                             .child("All"),
                                     )
                                     .child(
                                         theme_chip("f-type-folders", self.type_filter == TypeFilter::Folders, theme)
-                                            .on_click(cx.listener(|this, _, _, cx| { this.type_filter = TypeFilter::Folders; this.sort_and_filter(); cx.notify(); }))
+                                            .on_click(cx.listener(|this, _, _, cx| { this.type_filter = TypeFilter::Folders; this.filters_changed(cx); }))
                                             .child("Folders"),
                                     )
                                     .child(
                                         theme_chip("f-type-docs", self.type_filter == TypeFilter::Documents, theme)
-                                            .on_click(cx.listener(|this, _, _, cx| { this.type_filter = TypeFilter::Documents; this.sort_and_filter(); cx.notify(); }))
+                                            .on_click(cx.listener(|this, _, _, cx| { this.type_filter = TypeFilter::Documents; this.filters_changed(cx); }))
                                             .child("Docs"),
                                     )
                                     .child(
                                         theme_chip("f-type-images", self.type_filter == TypeFilter::Images, theme)
-                                            .on_click(cx.listener(|this, _, _, cx| { this.type_filter = TypeFilter::Images; this.sort_and_filter(); cx.notify(); }))
+                                            .on_click(cx.listener(|this, _, _, cx| { this.type_filter = TypeFilter::Images; this.filters_changed(cx); }))
                                             .child("Images"),
                                     )
                                     .child(
                                         theme_chip("f-type-media", self.type_filter == TypeFilter::Media, theme)
-                                            .on_click(cx.listener(|this, _, _, cx| { this.type_filter = TypeFilter::Media; this.sort_and_filter(); cx.notify(); }))
+                                            .on_click(cx.listener(|this, _, _, cx| { this.type_filter = TypeFilter::Media; this.filters_changed(cx); }))
                                             .child("Media"),
                                     )
                                     .child(
                                         theme_chip("f-type-code", self.type_filter == TypeFilter::Code, theme)
-                                            .on_click(cx.listener(|this, _, _, cx| { this.type_filter = TypeFilter::Code; this.sort_and_filter(); cx.notify(); }))
+                                            .on_click(cx.listener(|this, _, _, cx| { this.type_filter = TypeFilter::Code; this.filters_changed(cx); }))
                                             .child("Code"),
                                     )
                                     .child(
                                         theme_chip("f-type-archives", self.type_filter == TypeFilter::Archives, theme)
-                                            .on_click(cx.listener(|this, _, _, cx| { this.type_filter = TypeFilter::Archives; this.sort_and_filter(); cx.notify(); }))
+                                            .on_click(cx.listener(|this, _, _, cx| { this.type_filter = TypeFilter::Archives; this.filters_changed(cx); }))
                                             .child("Archives"),
                                     ),
                             ),
@@ -1727,22 +1798,22 @@ impl MainWindow {
                                     .gap_1p5()
                                     .child(
                                         theme_chip("f-date-any", self.date_filter == DateFilter::Any, theme)
-                                            .on_click(cx.listener(|this, _, _, cx| { this.date_filter = DateFilter::Any; this.sort_and_filter(); cx.notify(); }))
+                                            .on_click(cx.listener(|this, _, _, cx| { this.date_filter = DateFilter::Any; this.filters_changed(cx); }))
                                             .child("Any time"),
                                     )
                                     .child(
                                         theme_chip("f-date-today", self.date_filter == DateFilter::Today, theme)
-                                            .on_click(cx.listener(|this, _, _, cx| { this.date_filter = DateFilter::Today; this.sort_and_filter(); cx.notify(); }))
+                                            .on_click(cx.listener(|this, _, _, cx| { this.date_filter = DateFilter::Today; this.filters_changed(cx); }))
                                             .child("Today"),
                                     )
                                     .child(
                                         theme_chip("f-date-7d", self.date_filter == DateFilter::Last7Days, theme)
-                                            .on_click(cx.listener(|this, _, _, cx| { this.date_filter = DateFilter::Last7Days; this.sort_and_filter(); cx.notify(); }))
+                                            .on_click(cx.listener(|this, _, _, cx| { this.date_filter = DateFilter::Last7Days; this.filters_changed(cx); }))
                                             .child("Past 7 Days"),
                                     )
                                     .child(
                                         theme_chip("f-date-30d", self.date_filter == DateFilter::Last30Days, theme)
-                                            .on_click(cx.listener(|this, _, _, cx| { this.date_filter = DateFilter::Last30Days; this.sort_and_filter(); cx.notify(); }))
+                                            .on_click(cx.listener(|this, _, _, cx| { this.date_filter = DateFilter::Last30Days; this.filters_changed(cx); }))
                                             .child("Past 30 Days"),
                                     ),
                             ),
@@ -1768,22 +1839,22 @@ impl MainWindow {
                                     .gap_1p5()
                                     .child(
                                         theme_chip("f-size-any", self.size_filter == SizeFilter::Any, theme)
-                                            .on_click(cx.listener(|this, _, _, cx| { this.size_filter = SizeFilter::Any; this.sort_and_filter(); cx.notify(); }))
+                                            .on_click(cx.listener(|this, _, _, cx| { this.size_filter = SizeFilter::Any; this.filters_changed(cx); }))
                                             .child("Any"),
                                     )
                                     .child(
                                         theme_chip("f-size-small", self.size_filter == SizeFilter::Small, theme)
-                                            .on_click(cx.listener(|this, _, _, cx| { this.size_filter = SizeFilter::Small; this.sort_and_filter(); cx.notify(); }))
+                                            .on_click(cx.listener(|this, _, _, cx| { this.size_filter = SizeFilter::Small; this.filters_changed(cx); }))
                                             .child("< 1 MB"),
                                     )
                                     .child(
                                         theme_chip("f-size-med", self.size_filter == SizeFilter::Medium, theme)
-                                            .on_click(cx.listener(|this, _, _, cx| { this.size_filter = SizeFilter::Medium; this.sort_and_filter(); cx.notify(); }))
+                                            .on_click(cx.listener(|this, _, _, cx| { this.size_filter = SizeFilter::Medium; this.filters_changed(cx); }))
                                             .child("1-100 MB"),
                                     )
                                     .child(
                                         theme_chip("f-size-large", self.size_filter == SizeFilter::Large, theme)
-                                            .on_click(cx.listener(|this, _, _, cx| { this.size_filter = SizeFilter::Large; this.sort_and_filter(); cx.notify(); }))
+                                            .on_click(cx.listener(|this, _, _, cx| { this.size_filter = SizeFilter::Large; this.filters_changed(cx); }))
                                             .child("> 100 MB"),
                                     ),
                             ),
@@ -1836,7 +1907,7 @@ impl MainWindow {
         let view_mode_icon = if is_grid { "list" } else { "grid" };
 
         let hidden_text = if self.show_hidden { "Hide Hidden Files" } else { "Show Hidden Files" };
-        let inspector_text = if self.show_inspector { "Hide Inspector" } else { "Show Inspector" };
+        let inspector_text = "Properties";
 
         div()
             .id("more-menu-backdrop")
@@ -2273,9 +2344,7 @@ impl MainWindow {
                                 .gap_1()
                                 .cursor_pointer()
                                 .on_click(cx.listener(|this, _, _, cx| {
-                                    this.type_filter = TypeFilter::All;
-                                    this.sort_and_filter();
-                                    cx.notify();
+                                    this.type_filter = TypeFilter::All; this.filters_changed(cx);
                                 }))
                                 .child(
                                     div()
@@ -2300,9 +2369,7 @@ impl MainWindow {
                                 .gap_1()
                                 .cursor_pointer()
                                 .on_click(cx.listener(|this, _, _, cx| {
-                                    this.date_filter = DateFilter::Any;
-                                    this.sort_and_filter();
-                                    cx.notify();
+                                    this.date_filter = DateFilter::Any; this.filters_changed(cx);
                                 }))
                                 .child(
                                     div()
@@ -2327,9 +2394,7 @@ impl MainWindow {
                                 .gap_1()
                                 .cursor_pointer()
                                 .on_click(cx.listener(|this, _, _, cx| {
-                                    this.size_filter = SizeFilter::Any;
-                                    this.sort_and_filter();
-                                    cx.notify();
+                                    this.size_filter = SizeFilter::Any; this.filters_changed(cx);
                                 }))
                                 .child(
                                     div()
@@ -2609,19 +2674,13 @@ impl MainWindow {
                 open_path(&path);
             }
             PaletteAction::SetTypeFilter(f) => {
-                self.type_filter = f;
-                self.sort_and_filter();
-                cx.notify();
+                self.type_filter = f; self.filters_changed(cx);
             }
             PaletteAction::SetDateFilter(f) => {
-                self.date_filter = f;
-                self.sort_and_filter();
-                cx.notify();
+                self.date_filter = f; self.filters_changed(cx);
             }
             PaletteAction::SetSizeFilter(f) => {
-                self.size_filter = f;
-                self.sort_and_filter();
-                cx.notify();
+                self.size_filter = f; self.filters_changed(cx);
             }
             PaletteAction::ResetFilters => {
                 self.reset_filters(cx);
@@ -3549,6 +3608,247 @@ impl MainWindow {
         }
     }
 
+    fn open_context_menu(
+        &mut self,
+        index: usize,
+        position: gpui::Point<gpui::Pixels>,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(entry) = self.entry_at(index) {
+            self.context_menu = Some((entry.path.clone(), position));
+            self.selected_index = Some(index);
+            cx.notify();
+        }
+    }
+
+    fn render_context_menu(&self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let (path, position) = self.context_menu.as_ref()?;
+        let entry = self.entries.get(
+            *self
+                .filtered_indices
+                .iter()
+                .find(|&&i| self.entries[i].path == *path)?,
+        )?;
+        let theme = self.active_theme;
+        let width = px(192.);
+        let viewport = window.viewport_size();
+        let item = |id, label, symbol| {
+            div()
+                .id(id)
+                .role(Role::Button)
+                .h(px(30.))
+                .px_2()
+                .rounded(px(6.))
+                .flex()
+                .items_center()
+                .gap_2()
+                .cursor_pointer()
+                .hover(|style| style.bg(theme.sidebar_hover))
+                .child(icon(symbol, 14.).text_color(theme.text_muted))
+                .child(label)
+        };
+        let open_path = path.clone();
+        let info_path = path.clone();
+        let copy_path = path.clone();
+        let copy_name = entry.name.clone();
+        let rename_path = path.clone();
+        let terminal_path = path.clone();
+        let chooser_path = path.clone();
+        let can_open_with = !entry.is_directory;
+        let trash_path = path.clone();
+        let in_trash =
+            dirs::data_local_dir().is_some_and(|data| path.starts_with(data.join("Trash/files")));
+        let can_rename = !in_trash && path.file_name().is_some_and(|name| name.to_str().is_some());
+        let rows = 6 + usize::from(can_open_with) + usize::from(can_rename) - usize::from(in_trash);
+        let height = px(rows as f32 * 30. + 10.);
+
+        Some(
+            div()
+                .id("file-menu-backdrop")
+                .absolute()
+                .inset_0()
+                .occlude()
+                .child(
+                    div()
+                        .id("file-context-menu")
+                        .absolute()
+                        .occlude()
+                        .left(
+                            position
+                                .x
+                                .min((viewport.width - width - px(8.)).max(px(0.))),
+                        )
+                        .top(
+                            position
+                                .y
+                                .min((viewport.height - height - px(8.)).max(px(0.))),
+                        )
+                        .w(width)
+                        .max_h((viewport.height - px(16.)).max(px(30.)))
+                        .overflow_y_scroll()
+                        .p_1()
+                        .rounded(px(10.))
+                        .border_1()
+                        .border_color(theme.surface_border)
+                        .bg(Hsla {
+                            a: 1.,
+                            ..theme.card
+                        })
+                        .shadow(theme::floating_panel_shadows(&theme))
+                        .text_size(px(13.))
+                        .text_color(theme.text_primary)
+                        .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                            this.context_menu = None;
+                            cx.notify();
+                        }))
+                        .child(item("file-menu-open", "Open", "external-link").on_click(
+                            cx.listener(move |this, _, _, cx| {
+                                this.context_menu = None;
+                                this.selected_index = this
+                                    .filtered_indices
+                                    .iter()
+                                    .position(|&i| this.entries[i].path == open_path);
+                                this.open_selected(cx);
+                                cx.notify();
+                            }),
+                        ))
+                        .when(can_open_with, |menu| {
+                            menu.child(
+                                item("file-menu-open-with", "Open With…", "app-window").on_click(
+                                    cx.listener(move |this, _, window, cx| {
+                                        this.context_menu = None;
+                                        let path = chooser_path.clone();
+                                        let task = cx.background_executor().spawn(async move {
+                                            crate::filesystem::operations::open_file_with(&path)
+                                                .await
+                                        });
+                                        cx.spawn_in(window, async move |_, cx| {
+                                            if let Err(error) = task.await {
+                                                let _ = cx
+                                                    .prompt(
+                                                        gpui::PromptLevel::Warning,
+                                                        "Could not open the app chooser",
+                                                        Some(&error),
+                                                        &["ok"],
+                                                    )
+                                                    .await;
+                                            }
+                                        })
+                                        .detach();
+                                        cx.notify();
+                                    }),
+                                ),
+                            )
+                        })
+                        .when(can_rename, |menu| {
+                            menu.child(item("file-menu-rename", "Rename…", "pencil").on_click(
+                                cx.listener(move |this, _, window, cx| {
+                                    this.context_menu = None;
+                                    this.rename_target = Some(rename_path.clone());
+                                    this.path_input_text = rename_path
+                                        .file_name()
+                                        .unwrap()
+                                        .to_string_lossy()
+                                        .into_owned();
+                                    this.path_editing = true;
+                                    this.focus_handle.focus(window, cx);
+                                    cx.notify();
+                                }),
+                            ))
+                        })
+                        .child(item("file-menu-copy-name", "Copy Name", "copy").on_click(
+                            cx.listener(move |this, _, _, cx| {
+                                this.context_menu = None;
+                                cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+                                    copy_name.clone(),
+                                ));
+                                cx.notify();
+                            }),
+                        ))
+                        .child(item("file-menu-copy-path", "Copy Path", "copy").on_click(
+                            cx.listener(move |this, _, _, cx| {
+                                this.context_menu = None;
+                                cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+                                    copy_path.to_string_lossy().into_owned(),
+                                ));
+                                cx.notify();
+                            }),
+                        ))
+                        .child(
+                            item("file-menu-terminal", "Open in Terminal", "terminal").on_click(
+                                cx.listener(move |this, _, _, cx| {
+                                    this.context_menu = None;
+                                    open_in_terminal(&terminal_path);
+                                    cx.notify();
+                                }),
+                            ),
+                        )
+                        .when(!in_trash, |menu| {
+                            menu.child(item("file-menu-trash", "Move to Trash", "trash").on_click(
+                                cx.listener(move |this, _, window, cx| {
+                                    this.context_menu = None;
+                                    let path = trash_path.clone();
+                                    let detail =
+                                        path.file_name().map(|name| name.to_string_lossy());
+                                    let answer = window.prompt(
+                                        gpui::PromptLevel::Warning,
+                                        "Move this item to Trash?",
+                                        detail.as_deref(),
+                                        &[
+                                            gpui::PromptButton::ok("Move to Trash"),
+                                            gpui::PromptButton::cancel("Cancel"),
+                                        ],
+                                        cx,
+                                    );
+                                    let executor = cx.background_executor().clone();
+                                    cx.spawn_in(window, async move |view, cx| {
+                                        if answer.await != Ok(0) {
+                                            return;
+                                        }
+                                        let result = executor
+                                            .spawn(async move {
+                                                crate::filesystem::operations::trash_paths(&[path])
+                                            })
+                                            .await;
+                                        match result {
+                                            Ok(_) => {
+                                                let _ =
+                                                    view.update(cx, |this, cx| this.refresh(cx));
+                                            }
+                                            Err(error) => {
+                                                let _ = cx
+                                                    .prompt(
+                                                        gpui::PromptLevel::Critical,
+                                                        "Could not move item to Trash",
+                                                        Some(&error),
+                                                        &["ok"],
+                                                    )
+                                                    .await;
+                                            }
+                                        }
+                                    })
+                                    .detach();
+                                    cx.notify();
+                                }),
+                            ))
+                        })
+                        .child(
+                            item("file-menu-properties", "Properties", "sliders").on_click(
+                                cx.listener(move |this, _, _, cx| {
+                                    this.context_menu = None;
+                                    this.selected_index = this
+                                        .filtered_indices
+                                        .iter()
+                                        .position(|&i| this.entries[i].path == info_path);
+                                    this.toggle_inspector(cx);
+                                }),
+                            ),
+                        ),
+                )
+                .into_any_element(),
+        )
+    }
+
     fn render_list_rows(
         &mut self,
         range: std::ops::Range<usize>,
@@ -3582,8 +3882,14 @@ impl MainWindow {
                     .when(!is_selected, |d| {
                         d.hover(|s| s.bg(theme.card_hover))
                     })
+                    .on_aux_click(cx.listener(move |this, ev: &ClickEvent, _, cx| {
+                        if ev.is_secondary() {
+                            this.open_context_menu(i, ev.position(), cx);
+                        }
+                    }))
                     .on_click(cx.listener(move |this, ev: &ClickEvent, _, cx| {
                         if ev.click_count() >= 2 {
+                            this.selected_index = Some(i);
                             this.open_selected(cx);
                         } else {
                             this.selected_index = Some(i);
@@ -3716,8 +4022,14 @@ impl MainWindow {
                             .flex_col()
                             .items_center()
                             .justify_between()
+                            .on_aux_click(cx.listener(move |this, ev: &ClickEvent, _, cx| {
+                                if ev.is_secondary() {
+                                    this.open_context_menu(i, ev.position(), cx);
+                                }
+                            }))
                             .on_click(cx.listener(move |this, ev: &ClickEvent, _, cx| {
                                 if ev.click_count() >= 2 {
+                                    this.selected_index = Some(i);
                                     this.open_selected(cx);
                                 } else {
                                     this.selected_index = Some(i);
@@ -3797,203 +4109,170 @@ impl MainWindow {
             .collect()
     }
 
-    fn render_inspector(&self, theme: &theme::ThemeColors, cx: &mut Context<Self>) -> Div {
-        let selected_entry = self.selected_index.and_then(|i| self.entry_at(i));
-
+    fn render_properties(&self, theme: &theme::ThemeColors, cx: &mut Context<Self>) -> Div {
+        let entry = self.properties_entry.as_ref();
+        let path = entry.map_or(self.current_path.as_path(), |entry| entry.path.as_path());
+        let name = path
+            .file_name()
+            .map(|name| name.to_string_lossy())
+            .unwrap_or_else(|| path.to_string_lossy());
+        let mut details = vec![(
+            "Type",
+            entry.map_or_else(|| "Folder".into(), FileEntry::type_description),
+        )];
+        if let Some(entry) = entry {
+            let size = if entry.is_directory {
+                match &self.properties_size {
+                    Some(Ok(bytes)) => crate::utils::format_size(*bytes),
+                    Some(Err(_)) => "Unavailable".into(),
+                    None => "Calculating…".into(),
+                }
+            } else {
+                entry.formatted_size()
+            };
+            details.push(("Size", size));
+            details.push(("Created", crate::utils::format_date(entry.created)));
+            details.push(("Modified", entry.formatted_modified()));
+            details.push(("Permissions", entry.formatted_permissions()));
+        }
+        details.push(("Location", path.to_string_lossy().into_owned()));
+        let path_for_copy = path.to_path_buf();
+        let icon_path = entry.map_or_else(
+            || "folder.svg".into(),
+            |entry| format!("{}.svg", entry.icon_name),
+        );
         div()
-            .w(px(270.))
-            .h_full()
-            .flex_shrink_0()
-            .bg(theme.sidebar)
-            .rounded(px(theme::RADIUS_PANEL))
-            .border_1()
-            .border_color(theme.surface_border)
-            .shadow(theme::floating_panel_shadows(theme))
+            .absolute()
+            .inset_0()
             .p_4()
-            .overflow_hidden()
-            .flex()
-            .flex_col()
-            .gap_4()
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .child(
-                        div()
-                            .text_size(px(theme::TEXT_HEADER))
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .text_color(theme.text_primary)
-                            .child("Properties"),
-                    )
-                    .child(icon("sliders", 14.).text_color(theme.text_faint)),
-            )
-            .child(match selected_entry {
-                Some(entry) => self.render_inspector_file(entry, theme, cx).into_any_element(),
-                None => self.render_inspector_folder(theme, cx).into_any_element(),
-            })
-    }
-
-    fn render_inspector_file(&self, entry: &FileEntry, theme: &theme::ThemeColors, cx: &mut Context<Self>) -> Div {
-        let path = entry.path.clone();
-        let thumb_path = self.thumbnails.get_thumbnail_path(&entry.path, entry.content_type, entry.size);
-
-        let preview_box = div()
-            .w_full()
-            .h(px(140.))
-            .bg(theme.card)
-            .rounded(px(RADIUS_CARD))
-            .border_1()
-            .border_color(theme.card_border)
             .flex()
             .items_center()
             .justify_center()
-            .overflow_hidden()
-            .child(match thumb_path {
-                Some(p) => img(p)
-                    .max_w(px(130.))
-                    .max_h(px(130.))
-                    .rounded(px(theme::RADIUS_THUMB))
-                    .into_any_element(),
-                None => {
-                    if entry.is_directory {
-                        img("folder.svg")
-                            .size(px(72.))
-                            .into_any_element()
-                    } else {
-                        img(SharedString::from(format!("{}.svg", entry.icon_name)))
-                            .size(px(72.))
-                            .into_any_element()
-                    }
-                },
-            });
-
-        let file_name = div()
-            .text_size(px(theme::TEXT_TITLE))
-            .font_weight(gpui::FontWeight::SEMIBOLD)
-            .text_color(theme.text_primary)
-            .child(entry.name.clone());
-
-        let meta_list = div()
-            .flex()
-            .flex_col()
-            .gap_2()
-            .child(Self::meta_row("Size", &entry.formatted_size(), theme))
-            .child(Self::meta_row("Type", &entry.type_description(), theme))
-            .child(Self::meta_row("Modified", &entry.formatted_modified(), theme))
-            .child(Self::meta_row("Permissions", &entry.formatted_permissions(), theme))
-            .child(Self::meta_row("Location", &entry.path.parent().unwrap_or(&entry.path).to_string_lossy(), theme));
-
-        let target_file = path.clone();
-        let target_term = path.clone();
-
-        let actions = div()
-            .flex()
-            .flex_col()
-            .gap_2()
-            .mt_auto()
-            .child(
-                button("inspector-btn-open", ButtonLook::Primary)
-                    .w_full()
-                    .on_click(cx.listener(move |_, _, _, _| {
-                        open_path(&target_file);
-                    }))
-                    .child("Open"),
-            )
-            .child(
-                button("inspector-btn-term", ButtonLook::Secondary)
-                    .w_full()
-                    .on_click(cx.listener(move |_, _, _, _| {
-                        open_in_terminal(&target_term);
-                    }))
-                    .child("Open in Terminal"),
-            );
-
-        div()
-            .flex_1()
-            .flex()
-            .flex_col()
-            .gap_3()
-            .child(preview_box)
-            .child(file_name)
-            .child(meta_list)
-            .child(actions)
-    }
-
-    fn render_inspector_folder(&self, theme: &theme::ThemeColors, cx: &mut Context<Self>) -> Div {
-        let name = self.current_path
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| "/".to_string());
-
-        let free_space = crate::utils::get_disk_free_space(&self.current_path).unwrap_or_else(|| "Unknown".to_string());
-        let target_term = self.current_path.clone();
-
-        div()
-            .flex_1()
-            .flex()
-            .flex_col()
-            .gap_3()
+            .bg(gpui::rgba(0x00000055))
             .child(
                 div()
-                    .w_full()
-                    .h(px(140.))
-                    .bg(theme.card)
-                    .rounded(px(RADIUS_CARD))
-                    .border_1()
-                    .border_color(theme.card_border)
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .child(img("folder.svg").size(px(72.))),
+                    .id("properties-backdrop")
+                    .absolute()
+                    .inset_0()
+                    .occlude()
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.close_properties();
+                        cx.notify();
+                    })),
             )
             .child(
                 div()
-                    .text_size(px(theme::TEXT_TITLE))
-                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                    .text_color(theme.text_primary)
-                    .child(name),
-            )
-            .child(
-                div()
+                    .id("properties-card")
+                    .occlude()
+                    .w(px(420.))
+                    .max_w_full()
+                    .max_h_full()
                     .flex()
                     .flex_col()
-                    .gap_2()
-                    .child(Self::meta_row("Type", "Directory", theme))
-                    .child(Self::meta_row("Disk Free", &format!("{} free", free_space), theme))
-                    .child(Self::meta_row("Path", &self.current_path.to_string_lossy(), theme)),
-            )
-            .child(
-                div()
-                    .mt_auto()
-                    .child(
-                        button("inspector-btn-term-folder", ButtonLook::Secondary)
-                            .w_full()
-                            .on_click(cx.listener(move |_, _, _, _| {
-                                open_in_terminal(&target_term);
-                            }))
-                            .child("Open in Terminal"),
-                    ),
-            )
-    }
-
-    fn meta_row(label: &'static str, value: &str, theme: &theme::ThemeColors) -> Div {
-        div()
-            .flex()
-            .justify_between()
-            .items_start()
-            .text_size(px(theme::TEXT_SMALL))
-            .child(
-                div()
-                    .text_color(theme.text_faint)
-                    .child(label),
-            )
-            .child(
-                div()
-                    .text_color(theme.text_primary)
-                    .max_w(px(160.))
+                    .rounded(px(14.))
+                    .border_1()
+                    .border_color(theme.surface_border)
+                    .bg(Hsla {
+                        a: 1.,
+                        ..theme.card
+                    })
+                    .shadow(theme::floating_panel_shadows(theme))
                     .overflow_hidden()
-                    .child(value.to_string()),
+                    .child(
+                        div()
+                            .flex()
+                            .flex_shrink_0()
+                            .items_center()
+                            .justify_between()
+                            .px_4()
+                            .py_2()
+                            .child(
+                                div()
+                                    .text_size(px(15.))
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .text_color(theme.text_primary)
+                                    .child("Properties"),
+                            )
+                            .child(
+                                icon_button("close-properties", "cancel-01", false, true)
+                                    .aria_label("Close Properties")
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.close_properties();
+                                        cx.notify();
+                                    })),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .id("properties-details")
+                            .min_h_0()
+                            .overflow_y_scroll()
+                            .px_4()
+                            .pb_4()
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_3()
+                                    .py_3()
+                                    .child(
+                                        img(SharedString::from(icon_path))
+                                            .size(px(42.))
+                                            .flex_shrink_0(),
+                                    )
+                                    .child(
+                                        div()
+                                            .min_w_0()
+                                            .text_size(px(16.))
+                                            .text_color(theme.text_primary)
+                                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                                            .child(name.into_owned()),
+                                    ),
+                            )
+                            .children(details.into_iter().map(|(label, value)| {
+                                div()
+                                    .border_t_1()
+                                    .border_color(theme.surface_border)
+                                    .py_2()
+                                    .flex()
+                                    .items_start()
+                                    .gap_3()
+                                    .text_size(px(13.))
+                                    .child(
+                                        div()
+                                            .w(px(86.))
+                                            .flex_shrink_0()
+                                            .text_color(theme.text_muted)
+                                            .child(label),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .min_w_0()
+                                            .text_color(theme.text_primary)
+                                            .child(value),
+                                    )
+                            })),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_shrink_0()
+                            .justify_end()
+                            .px_4()
+                            .py_2()
+                            .border_t_1()
+                            .border_color(theme.surface_border)
+                            .child(
+                                theme_button("properties-copy-path", ButtonLook::Secondary, theme)
+                                    .child("Copy Path")
+                                    .on_click(cx.listener(move |_, _, _, cx| {
+                                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+                                            path_for_copy.to_string_lossy().into_owned(),
+                                        ));
+                                    })),
+                            ),
+                    ),
             )
     }
 }
@@ -4034,9 +4313,7 @@ impl Render for MainWindow {
         // Dynamic responsive column calculation across pane width
         let window_width = f32::from(window.viewport_size().width);
         let sidebar_slot = theme::PANEL_MARGIN + theme::SIDEBAR_PANEL_WIDTH + theme::PANEL_GAP + theme::PANEL_MARGIN;
-        let inspector_width = if self.show_inspector { 270.0 } else { 0.0 };
-        let inspector_gap = if self.show_inspector { 8.0 } else { 0.0 };
-        let pane_width = (window_width - sidebar_slot - inspector_width - inspector_gap - 16.0).max(200.0);
+        let pane_width = (window_width - sidebar_slot - 16.0).max(200.0);
 
         let card_width = self.zoom;
         let gap = 12.0;
@@ -4045,11 +4322,6 @@ impl Render for MainWindow {
 
         let toolbar = self.render_header(&theme, cx);
         let sidebar = self.render_sidebar(&theme, cx);
-        let inspector = if self.show_inspector {
-            Some(self.render_inspector(&theme, cx))
-        } else {
-            None
-        };
         let pane = self.render_pane(&theme, cx);
 
         // Bottom Status Bar
@@ -4093,8 +4365,7 @@ impl Render for MainWindow {
                     .flex()
                     .flex_row()
                     .overflow_hidden()
-                    .child(pane)
-                    .children(inspector),
+                    .child(pane),
             )
             .child(status_bar);
 
@@ -4126,9 +4397,24 @@ impl Render for MainWindow {
                     }
                 }
             }))
-            .on_key_down(cx.listener(|this, ev: &KeyDownEvent, _, cx| {
+            .on_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| {
                 let key = ev.keystroke.key.as_str();
                 let modifiers = ev.keystroke.modifiers;
+
+                if this.show_inspector {
+                    if key == "escape" {
+                        this.close_properties();
+                        cx.notify();
+                    }
+                    return;
+                }
+                if this.context_menu.is_some() {
+                    if key == "escape" {
+                        this.context_menu = None;
+                        cx.notify();
+                    }
+                    return;
+                }
 
                 // 0. Command Palette Mode
                 if this.show_command_palette {
@@ -4201,6 +4487,7 @@ impl Render for MainWindow {
                 }
                 if modifiers.control && key == "l" {
                     this.path_editing = true;
+                    this.rename_target = None;
                     this.search_active = false;
                     this.path_input_text = this.current_path.to_string_lossy().to_string();
                     cx.notify();
@@ -4230,10 +4517,11 @@ impl Render for MainWindow {
                     match key {
                         "escape" => {
                             this.path_editing = false;
+                            this.rename_target = None;
                             cx.notify();
                         }
                         "enter" => {
-                            this.commit_path_input(cx);
+                            this.commit_path_input(window, cx);
                         }
                         "backspace" => {
                             this.path_input_text.pop();
@@ -4315,6 +4603,7 @@ impl Render for MainWindow {
                             .child(content_panel),
                     ),
             )
+            .children(self.render_context_menu(window, cx))
             .when(self.show_filter_menu, |d| {
                 d.child(self.render_filter_popover(&theme, cx))
             })
@@ -4327,6 +4616,7 @@ impl Render for MainWindow {
             .when(self.show_command_palette, |d| {
                 d.child(self.render_command_palette(&theme, cx))
             })
+            .when(self.show_inspector, |d| d.child(self.render_properties(&theme, cx)))
             // 8 edge / corner interactive resize handles for Wayland/X11
             .child(
                 div()

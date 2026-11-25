@@ -1,4 +1,5 @@
 use shark::filesystem::*;
+use shark::filesystem::operations::folder_size;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
@@ -143,4 +144,28 @@ fn test_move_paths_async() {
     assert!(finished);
     assert!(!file1.exists());
     assert!(dst_dir.join("move_me.txt").exists());
+}
+
+#[test]
+fn rename_preserves_existing_destination_even_if_symlink_is_dangling() {
+    let temp = TempTestDir::new("rename_conflict");
+    let source = temp.path.join("source.txt");
+    let destination = temp.path.join("target.txt");
+    std::fs::write(&source, "keep source").unwrap();
+    std::os::unix::fs::symlink(temp.path.join("missing"), &destination).unwrap();
+
+    assert!(rename_path(&source, "target.txt").is_err());
+    assert!(destination.is_symlink());
+    assert_eq!(std::fs::read_to_string(&source).unwrap(), "keep source");
+}
+
+#[test]
+fn folder_size_counts_nested_files_without_following_links() {
+    let temp = TempTestDir::new("properties_size");
+    let child = temp.path.join("nested");
+    std::fs::create_dir(&child).unwrap();
+    std::fs::write(temp.path.join("one"), b"123").unwrap();
+    std::fs::write(child.join("two"), b"12345").unwrap();
+    std::os::unix::fs::symlink(&temp.path, child.join("loop")).unwrap();
+    assert_eq!(folder_size(&temp.path, &AtomicBool::new(false)).unwrap(), 8);
 }

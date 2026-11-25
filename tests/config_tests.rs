@@ -47,3 +47,40 @@ fn tags_round_trip_and_toggle_independently_of_filename() {
     old.as_object_mut().unwrap().remove("tags");
     assert!(serde_json::from_value::<Config>(old).unwrap().tags.is_empty());
 }
+
+#[test]
+fn filters_round_trip_and_default_for_existing_configs() {
+    use shark::config::{DateFilter, SizeFilter, TypeFilter};
+
+    let config = Config {
+        type_filter: TypeFilter::Images,
+        date_filter: DateFilter::Last7Days,
+        size_filter: SizeFilter::Medium,
+        sort_folders_first: false,
+        ..Config::default()
+    };
+    let mut json = serde_json::to_value(config).unwrap();
+    let restored: Config = serde_json::from_value(json.clone()).unwrap();
+    assert_eq!(restored.type_filter, TypeFilter::Images);
+    assert_eq!(restored.date_filter, DateFilter::Last7Days);
+    assert_eq!(restored.size_filter, SizeFilter::Medium);
+    assert!(!restored.sort_folders_first);
+
+    for field in ["type_filter", "date_filter", "size_filter", "sort_folders_first"] {
+        json.as_object_mut().unwrap().remove(field);
+    }
+    let old: Config = serde_json::from_value(json).unwrap();
+    assert_eq!(old.type_filter, TypeFilter::All);
+    assert_eq!(old.date_filter, DateFilter::Any);
+    assert_eq!(old.size_filter, SizeFilter::Any);
+    assert!(old.sort_folders_first);
+}
+
+#[test]
+fn zoom_round_trips_and_defaults_for_older_config() {
+    let config = Config { zoom: 180., ..Config::default() };
+    let mut json = serde_json::to_value(config).unwrap();
+    assert_eq!(serde_json::from_value::<Config>(json.clone()).unwrap().zoom, 180.);
+    json.as_object_mut().unwrap().remove("zoom");
+    assert_eq!(serde_json::from_value::<Config>(json).unwrap().zoom, Config::default().zoom);
+}
