@@ -466,3 +466,35 @@ fn copy_dir_recursive(
     }
     Ok(())
 }
+
+/// Transfer into a directory while preserving symlinks and existing destination entries.
+pub fn transfer_into(source: &Path, directory: &Path, move_item: bool) -> Result<(), String> {
+    let name = source.file_name().ok_or("This item cannot be transferred")?;
+    let target = directory.join(name);
+    if target.symlink_metadata().is_ok() {
+        return Err(format!("{} already exists in the destination.", name.to_string_lossy()));
+    }
+    let metadata = source.symlink_metadata().map_err(|error| error.to_string())?;
+    if metadata.is_dir()
+        && directory.canonicalize().map_err(|error| error.to_string())?
+            .starts_with(source.canonicalize().map_err(|error| error.to_string())?)
+    {
+        return Err("A folder cannot be transferred into itself.".into());
+    }
+
+    // Coreutils handles cross-filesystem moves and preserves symlinks without clobbering.
+    let (program, flags) = if move_item { ("mv", "-nT") } else { ("cp", "-anT") };
+    let result = std::process::Command::new(program)
+        .args([flags, "--"])
+        .arg(source)
+        .arg(&target)
+        .output()
+        .map_err(|error| error.to_string())?;
+    if !result.status.success() {
+        return Err(String::from_utf8_lossy(&result.stderr).trim().into());
+    }
+    if move_item && source.symlink_metadata().is_ok() {
+        return Err(format!("{} could not be moved.", name.to_string_lossy()));
+    }
+    Ok(())
+}

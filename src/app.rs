@@ -17,6 +17,7 @@ impl SharkApp {
         let app = gpui::Application::with_platform(platform).with_assets(Assets);
 
         app.run(move |cx: &mut App| {
+            cx.set_prompt_builder(crate::ui::prompt::render_prompt);
             let config = Config::load();
             let initial_path = folder
                 .or_else(|| config.last_directory.clone())

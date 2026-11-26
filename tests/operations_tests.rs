@@ -169,3 +169,25 @@ fn folder_size_counts_nested_files_without_following_links() {
     std::os::unix::fs::symlink(&temp.path, child.join("loop")).unwrap();
     assert_eq!(folder_size(&temp.path, &AtomicBool::new(false)).unwrap(), 8);
 }
+
+#[test]
+fn transfers_preserve_existing_entries_and_reject_self_copy() {
+    use shark::filesystem::operations::transfer_into;
+
+    let temp = TempTestDir::new("transfer_into");
+    let source = temp.path.join("example");
+    let destination = temp.path.join("destination");
+    fs::create_dir(&source).unwrap();
+    fs::create_dir(&destination).unwrap();
+    fs::write(source.join("data"), b"payload").unwrap();
+    std::os::unix::fs::symlink("data", source.join("link")).unwrap();
+    assert!(transfer_into(&source, &source, false).is_err());
+    transfer_into(&source, &destination, false).unwrap();
+    assert_eq!(fs::read_link(destination.join("example/link")).unwrap(), PathBuf::from("data"));
+    assert!(transfer_into(&source, &destination, true).is_err());
+    assert!(source.is_dir());
+    fs::remove_dir_all(destination.join("example")).unwrap();
+    transfer_into(&source, &destination, true).unwrap();
+    assert!(!source.exists());
+    assert_eq!(fs::read(destination.join("example/data")).unwrap(), b"payload");
+}

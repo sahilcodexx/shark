@@ -2091,7 +2091,9 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn can_start_external_drag(&self) -> bool {
-        true
+        // Wayland's native drag currently has no icon surface. Keep GPUI's
+        // preview and cursor while the pointer is still inside the source window.
+        !self.visual_viewport_bounds().contains(&self.mouse_position())
     }
 
     fn start_external_drag(&self, payload: &ExternalDragPayload) -> bool {

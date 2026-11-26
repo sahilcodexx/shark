@@ -85,6 +85,7 @@ pub fn get_content_type_description(mime: &str, is_dir: bool) -> String {
         "application/x-archive" => "Compressed Archive".to_string(),
         "application/x-shellscript" => "Shell Script".to_string(),
         "application/x-executable" => "Executable Program".to_string(),
+        "application/vnd.appimage" => "AppImage".to_string(),
         "image/png" => "PNG Image".to_string(),
         "image/jpeg" => "JPEG Image".to_string(),
         "image/gif" => "GIF Image".to_string(),
@@ -212,6 +213,9 @@ pub fn find_cached_thumbnail_path(path: &Path) -> Option<PathBuf> {
 
 /// Generate a thumbnail into ~/.cache/thumbnails/normal/ in a background worker.
 pub fn generate_thumbnail_file(path: &Path, content_type: &str, _size: u64) -> Option<PathBuf> {
+    if content_type == "application/vnd.appimage" {
+        return crate::appimage_icon::thumbnail(path);
+    }
     let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     let path_str = canonical.to_string_lossy();
     let enc_uri = format!("file://{}", percent_encode_path(&path_str));

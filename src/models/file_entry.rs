@@ -173,6 +173,7 @@ impl FileEntry {
             "tar" | "gz" | "xz" | "bz2" | "zst" | "7z" | "rar" => "application/x-archive",
             "sh" | "bash" | "zsh" => "application/x-shellscript",
             "iso" => "application/x-cd-image",
+            "appimage" => "application/vnd.appimage",
             _ => "application/octet-stream",
         }
     }
@@ -181,6 +182,8 @@ impl FileEntry {
     pub fn determine_icon(content_type: &str, is_dir: bool, _is_symlink: bool, filename: &str) -> &'static str {
         if is_dir {
             "folder"
+        } else if content_type == "application/vnd.appimage" {
+            "app-window"
         } else if content_type == "application/pdf" || filename.to_lowercase().ends_with(".pdf") {
             "pdf"
         } else if content_type.starts_with("image/") {

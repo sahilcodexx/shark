@@ -21,6 +21,60 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver};
 use std::sync::Arc;
 
+#[derive(Clone)]
+struct DraggedFile {
+    path: PathBuf,
+    is_directory: bool,
+    icon_name: &'static str,
+    thumbnail: Option<PathBuf>,
+}
+
+struct DragPreview {
+    file: DraggedFile,
+    grab_offset: gpui::Point<gpui::Pixels>,
+    theme: theme::ThemeColors,
+}
+
+impl Render for DragPreview {
+    fn render(&mut self, window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let viewport = window.visual_viewport_bounds();
+        let pointer = window.mouse_position();
+        let width = px(184.);
+        let height = px(62.);
+        let x = if pointer.x + width + px(14.) > viewport.right() {
+            -width - px(10.)
+        } else {
+            px(14.)
+        };
+        let y = if pointer.y + height + px(12.) > viewport.bottom() {
+            -height - px(10.)
+        } else {
+            px(12.)
+        };
+        let preview = if let Some(path) = &self.file.thumbnail {
+            img(path.clone()).size(px(48.)).object_fit(gpui::ObjectFit::Contain)
+                .into_any_element()
+        } else {
+            img(SharedString::from(format!("{}.svg", self.file.icon_name)))
+                .size(px(42.)).into_any_element()
+        };
+        div().size(px(1.)).relative().child(
+                div().absolute().left(self.grab_offset.x + x).top(self.grab_offset.y + y)
+                    .w(width).h(height).p_1().pr_3().flex().items_center().gap_2()
+                    .rounded(px(9.)).border_1().border_color(self.theme.surface_border)
+                    .bg(Hsla { a: 1., ..self.theme.card })
+                    .shadow(theme::floating_panel_shadows(&self.theme))
+                    .child(div().size(px(52.)).flex_shrink_0().flex().items_center()
+                        .justify_center().rounded(px(5.)).bg(self.theme.button_fill)
+                        .overflow_hidden().child(preview))
+                    .child(div().min_w_0().truncate().text_size(px(12.))
+                        .text_color(self.theme.text_primary).child(
+                            self.file.path.file_name().unwrap_or_default().to_string_lossy().into_owned()
+                        )),
+            )
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum ViewMode {
     Grid,
@@ -128,6 +182,10 @@ pub struct MainWindow {
     pub search_active: bool,
     pub path_editing: bool,
     rename_target: Option<PathBuf>,
+    path_select_all: bool,
+    file_clipboard: Option<(PathBuf, bool)>,
+    drag_hover: Option<(PathBuf, gpui::Task<()>)>,
+    drag_scroll: Option<gpui::Task<()>>,
     pub path_input_text: String,
     pub theme_mode: theme::ThemeMode,
     pub active_theme: theme::ThemeColors,
@@ -225,6 +283,10 @@ impl MainWindow {
             search_active: false,
             path_editing: false,
             rename_target: None,
+            path_select_all: false,
+            file_clipboard: None,
+            drag_hover: None,
+            drag_scroll: None,
             path_input_text: String::new(),
             theme_mode,
             active_theme: initial_theme,
@@ -902,7 +964,15 @@ impl MainWindow {
                         .font_weight(gpui::FontWeight::MEDIUM)
                         .min_w_0()
                         .truncate()
-                        .child(if self.path_input_text.is_empty() { "Enter a folder path…".to_string() } else { format!("{}|", self.path_input_text) }),
+                        .child(if self.path_input_text.is_empty() {
+                            div().text_color(theme.text_muted).child(
+                                if self.rename_target.is_some() { "Enter a name…" } else { "Enter a folder path…" }
+                            )
+                        } else if self.path_select_all {
+                            div().rounded(px(3.)).bg(theme.selection).child(self.path_input_text.clone())
+                        } else {
+                            div().child(format!("{}|", self.path_input_text))
+                        }),
                 )
                 .child(
                     div()
@@ -932,8 +1002,7 @@ impl MainWindow {
                 ).into_any_element();
         }
 
-        div()
-            .id("location-pill")
+        Self::folder_drop_target(div().id("location-pill"), self.current_path.clone(), *theme, cx)
             .role(Role::Button)
             .aria_label("Edit location")
             .h(px(theme::BUTTON_HEIGHT))
@@ -949,6 +1018,7 @@ impl MainWindow {
             .hover(|style| style.bg(theme.button_hover))
             .on_click(cx.listener(|this, _, _, cx| {
                 this.path_editing = true;
+                this.path_select_all = false;
                 this.rename_target = None;
                 this.search_active = false;
                 this.path_input_text = this.current_path.to_string_lossy().into_owned();
@@ -3467,9 +3537,18 @@ impl MainWindow {
                 let is_active = self.current_path == path;
                 let target = path.clone();
 
-                div()
-                    .id(ElementId::from(id))
-                    .h(px(theme::SIDEBAR_ROW_HEIGHT))
+                let theme_selection = theme.selection;
+                let row = div().id(ElementId::from(id));
+                let row = if id == "place-trash" {
+                    row.drag_over::<DraggedFile>(move |style, _, _, _| style.bg(theme_selection))
+                        .on_drop(cx.listener(|this, file: &DraggedFile, window, cx| {
+                            this.confirm_trash(file.path.clone(), window, cx);
+                        }))
+                } else {
+                    let element = Self::folder_drop_target(row, path.clone(), *theme, cx);
+                    Self::spring_open_folder(element, path, cx)
+                };
+                row.h(px(theme::SIDEBAR_ROW_HEIGHT))
                     .px_2()
                     .rounded(px(6.))
                     .flex()
@@ -3690,6 +3769,237 @@ impl MainWindow {
         }
     }
 
+    fn begin_rename(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(name) = path.file_name().and_then(|name| name.to_str()) else { return };
+        if dirs::data_local_dir().is_some_and(|data| path.starts_with(data.join("Trash/files"))) {
+            return;
+        }
+        self.path_input_text = name.to_owned();
+        self.path_select_all = true;
+        self.rename_target = Some(path);
+        self.path_editing = true;
+        self.focus_handle.focus(window, cx);
+        cx.notify();
+    }
+
+    fn confirm_trash(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        if dirs::data_local_dir().is_some_and(|data| path.starts_with(data.join("Trash/files"))) {
+            return;
+        }
+        let detail = path.file_name().map(|name| name.to_string_lossy());
+        let answer = window.prompt(
+            gpui::PromptLevel::Warning, "Move this item to Trash?", detail.as_deref(),
+            &[gpui::PromptButton::ok("Move to Trash"), gpui::PromptButton::cancel("Cancel")], cx,
+        );
+        let executor = cx.background_executor().clone();
+        cx.spawn_in(window, async move |view, cx| {
+            if answer.await != Ok(0) { return; }
+            let result = executor.spawn(async move {
+                crate::filesystem::operations::trash_paths(&[path])
+            }).await;
+            match result {
+                Ok(_) => { let _ = view.update(cx, |this, cx| this.refresh(cx)); }
+                Err(error) => {
+                    let _ = cx.prompt(gpui::PromptLevel::Critical,
+                        "Could not move item to Trash", Some(&error), &["ok"]).await;
+                }
+            }
+        }).detach();
+    }
+
+    fn transfer_files(
+        &mut self, paths: Vec<PathBuf>, destination: PathBuf, move_items: bool,
+        window: &mut Window, cx: &mut Context<Self>,
+    ) {
+        if paths.is_empty() || dirs::data_local_dir().is_some_and(|data| {
+            destination.starts_with(data.join("Trash/files"))
+        }) { return; }
+        let cut_path = (move_items && paths.len() == 1).then(|| paths[0].clone());
+        let sources: Vec<_> = paths.iter().filter_map(|path| path.parent().map(Path::to_path_buf)).collect();
+        let target = destination.clone();
+        let job = cx.background_executor().spawn(async move {
+            let mut errors = Vec::new();
+            for path in paths {
+                if move_items && path.parent() == Some(target.as_path()) { continue; }
+                if let Err(error) = crate::filesystem::operations::transfer_into(&path, &target, move_items) {
+                    errors.push(error);
+                }
+            }
+            errors
+        });
+        cx.spawn_in(window, async move |view, cx| {
+            let errors = job.await;
+            let _ = view.update(cx, |this, cx| {
+                if errors.is_empty()
+                    && let Some(path) = cut_path
+                    && path.parent() != Some(destination.as_path())
+                    && this.file_clipboard.as_ref().is_some_and(|(item, cut)| *cut && item == &path)
+                {
+                    this.file_clipboard = None;
+                }
+                this.dir_cache.invalidate(&destination);
+                for parent in &sources { this.dir_cache.invalidate(parent); }
+                if this.current_path == destination || sources.contains(&this.current_path) {
+                    this.refresh(cx);
+                }
+            });
+            if let Some(error) = errors.first() {
+                let _ = cx.prompt(gpui::PromptLevel::Warning,
+                    "Could not transfer files", Some(error), &["ok"]).await;
+            }
+        }).detach();
+    }
+
+    fn drop_target(
+        element: gpui::Stateful<Div>, destination: PathBuf, cx: &mut Context<Self>,
+    ) -> gpui::Stateful<Div> {
+        let external_destination = destination.clone();
+        element
+            .on_drop(cx.listener(move |this, file: &DraggedFile, window, cx| {
+                this.drag_hover = None;
+                this.transfer_files(vec![file.path.clone()], destination.clone(), true, window, cx);
+            }))
+            .on_drop(cx.listener(move |this, files: &gpui::ExternalPaths, window, cx| {
+                this.drag_hover = None;
+                this.transfer_files(files.paths().to_vec(), external_destination.clone(), false, window, cx);
+            }))
+    }
+
+    fn folder_drop_target(
+        element: gpui::Stateful<Div>, destination: PathBuf, theme: theme::ThemeColors,
+        cx: &mut Context<Self>,
+    ) -> gpui::Stateful<Div> {
+        let hover_path = destination.clone();
+        Self::drop_target(element, destination, cx)
+            .drag_over::<DraggedFile>(move |style, file, _, _| {
+                if hover_path != file.path && file.path.parent() != Some(hover_path.as_path()) {
+                    style.bg(theme.selection)
+                } else {
+                    style
+                }
+            })
+            .drag_over::<gpui::ExternalPaths>(move |style, _, _, _| style.bg(theme.selection))
+    }
+
+    fn spring_open_folder(
+        element: gpui::Stateful<Div>, destination: PathBuf, cx: &mut Context<Self>,
+    ) -> gpui::Stateful<Div> {
+        element.on_drag_move(cx.listener(move |this, event: &gpui::DragMoveEvent<DraggedFile>, window, cx| {
+            let file = event.drag(cx);
+            let inside = event.bounds.contains(&event.event.position);
+            if !inside || destination == this.current_path
+                || destination == file.path
+                || (file.is_directory && destination.starts_with(&file.path))
+            {
+                if this.drag_hover.as_ref().is_some_and(|(path, _)| path == &destination) {
+                    this.drag_hover = None;
+                }
+                return;
+            }
+            if this.drag_hover.as_ref().is_some_and(|(path, _)| path == &destination) {
+                return;
+            }
+
+            let bounds = event.bounds;
+            let folder = destination.clone();
+            let timer = cx.background_executor().timer(std::time::Duration::from_millis(650));
+            let task = cx.spawn_in(window, async move |view, cx| {
+                timer.await;
+                let _ = cx.update(|window, cx| {
+                    if cx.has_active_drag() && bounds.contains(&window.mouse_position()) {
+                        let _ = view.update(cx, |this, cx| this.navigate_to(folder, cx));
+                    }
+                });
+            });
+            this.drag_hover = Some((destination.clone(), task));
+        }))
+    }
+
+    fn drag_scroll_step(&mut self, position: gpui::Point<gpui::Pixels>) -> bool {
+        let scroll = self.scroll_handle.0.borrow().base_handle.clone();
+        let bounds = scroll.bounds();
+        if !bounds.contains(&position) {
+            return false;
+        }
+        let edge = px(36.).min(bounds.size.height / 3.);
+        let delta = (edge - (position.y - bounds.top())).max(px(0.))
+            - (edge - (bounds.bottom() - position.y)).max(px(0.));
+        let offset = scroll.offset();
+        let next = (offset.y + delta * 0.3).clamp(-scroll.max_offset().y, px(0.));
+        if next == offset.y { return false; }
+        scroll.set_offset(gpui::point(offset.x, next));
+        self.drag_hover = None;
+        true
+    }
+
+    fn start_drag_scroll(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.drag_scroll.is_some() || !self.drag_scroll_step(window.mouse_position()) {
+            return;
+        }
+        let executor = cx.background_executor().clone();
+        self.drag_scroll = Some(cx.spawn_in(window, async move |view, cx| {
+            loop {
+                executor.timer(std::time::Duration::from_millis(16)).await;
+                let scrolling = cx.update(|window, cx| {
+                    cx.has_active_drag()
+                        && view.update(cx, |this, cx| {
+                            if this.drag_scroll_step(window.mouse_position()) {
+                                cx.notify();
+                                true
+                            } else {
+                                false
+                            }
+                        }).unwrap_or(false)
+                }).unwrap_or(false);
+                if !scrolling { break; }
+            }
+            let _ = view.update(cx, |this, _| this.drag_scroll = None);
+        }));
+    }
+
+    fn draggable_row(
+        element: gpui::Stateful<Div>, entry: &FileEntry, thumbnail: Option<PathBuf>,
+        theme: theme::ThemeColors, cx: &mut Context<Self>,
+    ) -> gpui::Stateful<Div> {
+        let file = DraggedFile {
+            path: entry.path.clone(), is_directory: entry.is_directory,
+            icon_name: entry.icon_name, thumbnail,
+        };
+        let element = element
+            .on_drag(file, move |file, grab_offset, _, cx| {
+                cx.new(|_| DragPreview { file: file.clone(), grab_offset, theme })
+            })
+            .external_drag_payload(|file: &DraggedFile, _, _| {
+                Some(gpui::ExternalDragPayload::Files(gpui::FileDragPaths::new([
+                    (file.path.clone(), file.is_directory),
+                ])))
+            });
+        if entry.is_directory {
+            let target = entry.path.clone();
+            let element = Self::folder_drop_target(element, target.clone(), theme, cx);
+            Self::spring_open_folder(element, target, cx)
+        } else {
+            element
+        }
+    }
+
+    fn select_with_keys(&mut self, key: &str, cx: &mut Context<Self>) {
+        let Some(last) = self.filtered_indices.len().checked_sub(1) else { return };
+        let stride = if self.view_mode == ViewMode::Grid { self.grid_cols.max(1) } else { 1 };
+        let index = match (key, self.selected_index) {
+            ("end", _) => last,
+            ("home", _) | (_, None) => 0,
+            ("up", Some(i)) => i.saturating_sub(stride),
+            ("down", Some(i)) => i.saturating_add(stride).min(last),
+            ("left", Some(i)) => i.saturating_sub(1),
+            ("right", Some(i)) => i.saturating_add(1).min(last),
+            (_, Some(i)) => i.min(last),
+        };
+        self.selected_index = Some(index);
+        self.scroll_handle.scroll_to_item(index / stride, gpui::ScrollStrategy::Nearest);
+        cx.notify();
+    }
+
     fn open_context_menu(
         &mut self,
         index: usize,
@@ -3826,15 +4136,7 @@ impl MainWindow {
                             menu.child(item("file-menu-rename", "Rename…", "pencil").on_click(
                                 cx.listener(move |this, _, window, cx| {
                                     this.context_menu = None;
-                                    this.rename_target = Some(rename_path.clone());
-                                    this.path_input_text = rename_path
-                                        .file_name()
-                                        .unwrap()
-                                        .to_string_lossy()
-                                        .into_owned();
-                                    this.path_editing = true;
-                                    this.focus_handle.focus(window, cx);
-                                    cx.notify();
+                                    this.begin_rename(rename_path.clone(), window, cx);
                                 }),
                             ))
                         })
@@ -3869,48 +4171,7 @@ impl MainWindow {
                             menu.child(item("file-menu-trash", "Move to Trash", "trash").on_click(
                                 cx.listener(move |this, _, window, cx| {
                                     this.context_menu = None;
-                                    let path = trash_path.clone();
-                                    let detail =
-                                        path.file_name().map(|name| name.to_string_lossy());
-                                    let answer = window.prompt(
-                                        gpui::PromptLevel::Warning,
-                                        "Move this item to Trash?",
-                                        detail.as_deref(),
-                                        &[
-                                            gpui::PromptButton::ok("Move to Trash"),
-                                            gpui::PromptButton::cancel("Cancel"),
-                                        ],
-                                        cx,
-                                    );
-                                    let executor = cx.background_executor().clone();
-                                    cx.spawn_in(window, async move |view, cx| {
-                                        if answer.await != Ok(0) {
-                                            return;
-                                        }
-                                        let result = executor
-                                            .spawn(async move {
-                                                crate::filesystem::operations::trash_paths(&[path])
-                                            })
-                                            .await;
-                                        match result {
-                                            Ok(_) => {
-                                                let _ =
-                                                    view.update(cx, |this, cx| this.refresh(cx));
-                                            }
-                                            Err(error) => {
-                                                let _ = cx
-                                                    .prompt(
-                                                        gpui::PromptLevel::Critical,
-                                                        "Could not move item to Trash",
-                                                        Some(&error),
-                                                        &["ok"],
-                                                    )
-                                                    .await;
-                                            }
-                                        }
-                                    })
-                                    .detach();
-                                    cx.notify();
+                                    this.confirm_trash(trash_path.clone(), window, cx);
                                 }),
                             ))
                         })
@@ -3944,8 +4205,7 @@ impl MainWindow {
                 let is_selected = self.selected_index == Some(i);
                 let thumb_path = self.thumbnails.get_thumbnail_path(&entry.path, entry.content_type, entry.size);
 
-                div()
-                    .id(ElementId::from(format!("list-row-{}", i)))
+                Self::draggable_row(div().id(ElementId::from(format!("list-row-{}", i))), entry, thumb_path.clone(), theme, cx)
                     .w_full()
                     .h(px(theme::ROW_HEIGHT))
                     .min_h(px(theme::ROW_HEIGHT))
@@ -3955,14 +4215,15 @@ impl MainWindow {
                     .rounded(px(RADIUS_THUMB))
                     .flex()
                     .items_center()
-                    .cursor_pointer()
+                    .cursor(CursorStyle::ClosedHand)
                     .when(is_selected, |d| {
                         d.bg(theme.selection)
                             .border_1()
                             .border_color(theme.accent)
                     })
-                    .when(!is_selected, |d| {
-                        d.hover(|s| s.bg(theme.card_hover))
+                    .hover(move |style| {
+                        let style = style.cursor(CursorStyle::OpenHand);
+                        if is_selected { style } else { style.bg(theme.card_hover) }
                     })
                     .on_aux_click(cx.listener(move |this, ev: &ClickEvent, _, cx| {
                         if ev.is_secondary() {
@@ -4085,8 +4346,7 @@ impl MainWindow {
                         let is_selected = self.selected_index == Some(i);
                         let thumb_path = self.thumbnails.get_thumbnail_path(&entry.path, entry.content_type, entry.size);
 
-                        div()
-                            .id(ElementId::from(format!("grid-card-{}", i)))
+                        Self::draggable_row(div().id(ElementId::from(format!("grid-card-{}", i))), entry, thumb_path.clone(), theme, cx)
                             .w(px(card_width))
                             .h(px(card_height))
                             .p_1p5()
@@ -4096,10 +4356,11 @@ impl MainWindow {
                                     .border_1()
                                     .border_color(theme.accent)
                             })
-                            .when(!is_selected, |d| {
-                                d.hover(|s| s.bg(theme.card_hover))
-                            })
-                            .cursor_pointer()
+                            .hover(move |style| {
+                        let style = style.cursor(CursorStyle::OpenHand);
+                        if is_selected { style } else { style.bg(theme.card_hover) }
+                    })
+                            .cursor(CursorStyle::ClosedHand)
                             .flex()
                             .flex_col()
                             .items_center()
@@ -4429,7 +4690,9 @@ impl Render for MainWindow {
             ))
             .child(format!("{} free", free_space));
 
-        let content_panel = div()
+        let content_panel = Self::drop_target(
+            div().id("file-drop-area"), self.current_path.clone(), cx,
+        )
             .flex_1()
             .min_w_0()
             .h_full()
@@ -4449,7 +4712,13 @@ impl Render for MainWindow {
                     .overflow_hidden()
                     .child(pane),
             )
-            .child(status_bar);
+            .child(status_bar)
+            .on_drag_move(cx.listener(|this, _: &gpui::DragMoveEvent<DraggedFile>, window, cx| {
+                this.start_drag_scroll(window, cx);
+            }))
+            .on_drag_move(cx.listener(|this, _: &gpui::DragMoveEvent<gpui::ExternalPaths>, window, cx| {
+                this.start_drag_scroll(window, cx);
+            }));
 
         // Keyboard & Scroll wheel handlers (Ctrl+Scroll for zooming)
         div()
@@ -4483,6 +4752,12 @@ impl Render for MainWindow {
                 let key = ev.keystroke.key.as_str();
                 let modifiers = ev.keystroke.modifiers;
 
+                if key == "escape" && cx.stop_active_drag(window) {
+                    this.drag_hover = None;
+                    this.drag_scroll = None;
+                    return;
+                }
+
                 if this.show_inspector {
                     if key == "escape" {
                         this.close_properties();
@@ -4493,6 +4768,16 @@ impl Render for MainWindow {
                 if this.context_menu.is_some() {
                     if key == "escape" {
                         this.context_menu = None;
+                        cx.notify();
+                    }
+                    return;
+                }
+
+                if this.show_settings_modal || this.show_more_menu || this.show_filter_menu {
+                    if key == "escape" {
+                        this.show_settings_modal = false;
+                        this.show_more_menu = false;
+                        this.show_filter_menu = false;
                         cx.notify();
                     }
                     return;
@@ -4569,6 +4854,7 @@ impl Render for MainWindow {
                 }
                 if modifiers.control && key == "l" {
                     this.path_editing = true;
+                    this.path_select_all = false;
                     this.rename_target = None;
                     this.search_active = false;
                     this.path_input_text = this.current_path.to_string_lossy().to_string();
@@ -4605,17 +4891,27 @@ impl Render for MainWindow {
                         "enter" => {
                             this.commit_path_input(window, cx);
                         }
+                        "a" if modifiers.control => {
+                            this.path_select_all = true;
+                            cx.notify();
+                        }
                         "backspace" => {
-                            this.path_input_text.pop();
+                            if std::mem::take(&mut this.path_select_all) {
+                                this.path_input_text.clear();
+                            } else {
+                                this.path_input_text.pop();
+                            }
                             cx.notify();
                         }
                         _ => {
                             if !modifiers.control && !modifiers.platform && !modifiers.alt {
-                                if let Some(ch) = &ev.keystroke.key_char {
-                                    this.path_input_text.push_str(ch);
-                                    cx.notify();
-                                } else if key.chars().count() == 1 {
-                                    this.path_input_text.push_str(key);
+                                if let Some(text) = ev.keystroke.key_char.as_deref()
+                                    .or_else(|| (key.chars().count() == 1).then_some(key))
+                                {
+                                    if std::mem::take(&mut this.path_select_all) {
+                                        this.path_input_text.clear();
+                                    }
+                                    this.path_input_text.push_str(text);
                                     cx.notify();
                                 }
                             }
@@ -4626,17 +4922,27 @@ impl Render for MainWindow {
 
                 // 2. Normal File View Mode
                 match key {
-                    "up" => {
-                        let prev = this.selected_index.map(|i| i.saturating_sub(1)).unwrap_or(0);
-                        this.selected_index = Some(prev);
-                        cx.notify();
+                    "up" | "down" | "home" | "end" => this.select_with_keys(key, cx),
+                    "left" | "right" if this.view_mode == ViewMode::Grid => this.select_with_keys(key, cx),
+                    "f2" | "delete" => {
+                        if let Some(path) = this.selected_index.and_then(|i| this.entry_at(i)).map(|e| e.path.clone()) {
+                            if key == "f2" { this.begin_rename(path, window, cx); }
+                            else { this.confirm_trash(path, window, cx); }
+                        }
                     }
-                    "down" => {
-                        let max = this.filtered_indices.len().saturating_sub(1);
-                        let next = this.selected_index.map(|i| (i + 1).min(max)).unwrap_or(0);
-                        this.selected_index = Some(next);
-                        cx.notify();
+                    "c" | "x" if modifiers.control => {
+                        if let Some(entry) = this.selected_index.and_then(|i| this.entry_at(i)) {
+                            this.file_clipboard = Some((entry.path.clone(), key == "x"));
+                        }
                     }
+                    "v" if modifiers.control => {
+                        if let Some((path, cut)) = this.file_clipboard.clone() {
+                            this.transfer_files(vec![path], this.current_path.clone(), cut, window, cx);
+                        }
+                    }
+                    "r" if modifiers.control => this.refresh(cx),
+                    "n" if modifiers.control && modifiers.shift => this.create_new_folder(cx),
+                    "i" if modifiers.control => this.toggle_inspector(cx),
                     "enter" => {
                         this.open_selected(cx);
                     }

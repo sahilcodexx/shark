@@ -110,7 +110,9 @@ impl ThumbnailCache {
         }
 
         // 4. For previewable media (images/videos) under 100MB, enqueue background thumbnail generation
-        if is_previewable_media(content_type, path) && size <= 100 * 1024 * 1024 {
+        if content_type == "application/vnd.appimage"
+            || (is_previewable_media(content_type, path) && size <= 100 * 1024 * 1024)
+        {
             let mut queued = self.queued.lock().unwrap();
             if queued.insert(path.to_path_buf()) {
                 let _ = self.sender.try_send((path.to_path_buf(), content_type.to_string(), size));

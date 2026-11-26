@@ -1,6 +1,7 @@
 //! Shark file manager library - High-performance GPU-accelerated file manager.
 
 pub mod app;
+mod appimage_icon;
 pub mod assets;
 pub mod config;
 pub mod filesystem;
